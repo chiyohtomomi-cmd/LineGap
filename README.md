@@ -4,7 +4,7 @@
 
 LineGap is a web app for coloring-book creators. It runs in Safari on iPad, iPhone and computer, works offline, and your images never leave your device.
 
-- **Use the app:** https://tomomi-cmd.github.io/linegap/
+- - **Use the app:** https://chiyohtomomi-cmd.github.io/LineGap/
 - **Get a license key:** https://linestudio5.gumroad.com/l/line-studio
 - **Support:** linestudio.app.kh@gmail.com
 
