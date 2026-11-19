@@ -224,8 +224,8 @@ a.btn{color:inherit;text-decoration:none;display:inline-flex;align-items:center}
   <div class="plist" id="projList"></div>
   <div class="empty" id="projEmpty">Make one project for each story or sticker set.<br>Tap <b>New project</b> to start.</div>
   <footer class="legal">
-    <a href="terms.html">Terms &amp; Refunds</a> · <a href="privacy.html">Privacy</a> · <a href="mailto:linestudio.app.kh@gmail.com">linestudio.app.kh@gmail.com</a>
-    <div>© 2026 LineGap. All rights reserved.</div>
+    <a href="terms.html">Terms &amp; Refunds</a> · <a href="privacy.html">Privacy</a> · <a href="mailto:tomomicreativehub@gmail.com">tomomicreativehub@gmail.com</a>
+    <div>© 2026 Tomomi Creative Hub. All rights reserved.<br>LineGap™ and its logo are trademarks of Tomomi Creative Hub.<br>Unauthorized copying, sharing or resale of this software or its license keys is prohibited.</div>
   </footer>
 </main>
 
@@ -1547,18 +1547,16 @@ async function pngBytes(p, gray) {
   const blob = await new Promise(r => c.toBlob(r, "image/png")); c.width = c.height = 1;
   return { bytes: new Uint8Array(await blob.arrayBuffer()), w: sz.w, h: sz.h };
 }
-// ===================== License (Lemon Squeezy) =====================
-// Fill these in after you create the product in Lemon Squeezy (Settings → Products → your product).
+// ===================== License (Gumroad) =====================
 const LICENSE = {
-  productId: null,      // Lemon Squeezy product id, e.g. 123456 (null = any Lemon Squeezy key, while the store is in review)
   gumroadProductId: "PYTlI_IFK0IfB0_DPAylZA==",   // Gumroad product id (Content tab → License key box)
   gumroadMaxUses: 3,    // Gumroad counts activations, not devices: 2 devices + 1 spare for a reinstall
-  supportEmail: "linestudio.app.kh@gmail.com",
+  supportEmail: "tomomicreativehub@gmail.com",
   buyUrl: "https://linestudio5.gumroad.com/l/line-studio",           // the checkout link people tap on "Get a key"
   freeExports: 3,       // exports allowed before a key is needed
   recheckDays: 7        // check the key online again after this many days (works offline in between)
 };
-// Gumroad keys look like 8-8-8-8 hex; Lemon Squeezy keys look like 8-4-4-4-12
+// Gumroad keys look like 8-8-8-8 hex
 const isGumroadKey = k => /^[0-9a-f]{8}-[0-9a-f]{8}-[0-9a-f]{8}-[0-9a-f]{8}$/i.test(k);
 async function gumVerify(key, count) {
   const r = await fetch("https://api.gumroad.com/v2/licenses/verify", { method: "POST", headers: { Accept: "application/json", "Content-Type": "application/x-www-form-urlencoded" },
@@ -1567,22 +1565,10 @@ async function gumVerify(key, count) {
   return j;
 }
 const gumBad = j => !j.success || !j.purchase || j.purchase.refunded || j.purchase.disputed || j.purchase.chargebacked;
-const LIC_API = "https://api.lemonsqueezy.com/v1/licenses/";
 const licOn = () => !window.claude;                 // the copy inside Claude is your own test copy: never locked
 function licGet() { try { return JSON.parse(localStorage.getItem("ls-license") || "null"); } catch (e) { return null; } }
 function licSet(v) { try { v ? localStorage.setItem("ls-license", JSON.stringify(v)) : localStorage.removeItem("ls-license"); } catch (e) {} }
 const freeUsed = () => +(lsGet("ls-free-used") || 0);
-function licDevice() {
-  let id = lsGet("ls-device"); if (!id) { id = Math.random().toString(36).slice(2, 8); lsSet("ls-device", id); }
-  const ua = navigator.userAgent, dev = /iPad|Macintosh/.test(ua) && navigator.maxTouchPoints > 1 ? "iPad" : /iPhone/.test(ua) ? "iPhone" : /Android/.test(ua) ? "Android" : /Mac/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows" : "Device";
-  return `LineGap · ${dev} · ${id}`;
-}
-async function licCall(action, data) {
-  const r = await fetch(LIC_API + action, { method: "POST", headers: { Accept: "application/json", "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(data) });
-  let j = {}; try { j = await r.json(); } catch (e) {}
-  return j;
-}
-const rightProduct = j => !LICENSE.productId || (j.meta && String(j.meta.product_id) === String(LICENSE.productId));
 const licValid = () => { const l = licGet(); return !!(l && l.ok); };
 function renderLicense() {
   const box = $("licBox"); if (!box) return;
@@ -1609,26 +1595,12 @@ $("licActivate").addEventListener("click", async () => {
     } catch (e) { busy(false); toast("Can’t reach the license server. Check your internet and try again."); }
     return;
   }
-  try {
-    const j = await licCall("activate", { license_key: key, instance_name: licDevice() });
-    busy(false);
-    if (!j.activated) {
-      const e = (j.error || "").toLowerCase();
-      toast(e.includes("limit") ? "This key is already used on the most devices allowed. Remove it from another device first." : e.includes("disabled") || e.includes("expired") ? "This key is no longer active." : "That key didn’t work. Check it and try again.", 4500);
-      return;
-    }
-    if (!rightProduct(j)) { try { await licCall("deactivate", { license_key: key, instance_id: j.instance.id }); } catch (e) {} toast("This key is for a different product."); return; }
-    licSet({ ok: true, key, instance: j.instance.id, checked: Date.now() });
-    $("licKey").value = ""; renderLicense(); toast("Activated ✓ Thank you!");
-  } catch (e) { busy(false); toast("Can’t reach the license server. Check your internet and try again."); }
+  busy(false); toast("That key didn’t work. Check it and try again.", 4500);
 });
 $("licRemove").addEventListener("click", async () => {
   const b = $("licRemove"), l = licGet(); if (!l) return;
   if (!b.dataset.armed) { b.dataset.armed = "1"; b.textContent = "Tap again to remove"; setTimeout(() => { delete b.dataset.armed; b.textContent = "Remove from this device"; }, 3000); return; }
-  if (l.provider === "gumroad") { licSet(null); renderLicense(); toast(`Removed from this device. To use it on a new device, email ${LICENSE.supportEmail} if it says the limit is reached.`, 6000); return; }
-  busy(true, "Removing…");
-  try { await licCall("deactivate", { license_key: l.key, instance_id: l.instance }); } catch (e) {}
-  busy(false); licSet(null); renderLicense(); toast("Removed. You can use the key on another device.");
+  licSet(null); renderLicense(); toast(`Removed from this device. To use it on a new device, email ${LICENSE.supportEmail} if it says the limit is reached.`, 6000);
 });
 // re-check now and then; offline is fine, only a clear "no" from the server removes the key
 (async () => {
@@ -1636,15 +1608,9 @@ $("licRemove").addEventListener("click", async () => {
   renderLicense();
   const l = licGet(); if (!l || !l.ok || Date.now() - (l.checked || 0) < LICENSE.recheckDays * 864e5 || !navigator.onLine) return;
   try {
-    if (l.provider === "gumroad") {
-      const g = await gumVerify(l.key, false);
-      if (g && g.success === true && !gumBad(g)) { l.checked = Date.now(); licSet(l); }
-      else if (g && (g.success === false || gumBad(g))) { licSet(null); toast("Your license is no longer active on this device.", 4000); }
-      renderLicense(); return;
-    }
-    const j = await licCall("validate", { license_key: l.key, instance_id: l.instance });
-    if (j && j.valid === true && rightProduct(j)) { l.checked = Date.now(); licSet(l); }
-    else if (j && j.valid === false) { licSet(null); toast("Your license is no longer active on this device.", 4000); }
+    const g = await gumVerify(l.key, false);
+    if (g && g.success === true && !gumBad(g)) { l.checked = Date.now(); licSet(l); }
+    else if (g && (g.success === false || gumBad(g))) { licSet(null); toast("Your license is no longer active on this device.", 4000); }
   } catch (e) {}
   renderLicense();
 })();

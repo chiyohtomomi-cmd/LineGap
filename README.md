@@ -4,9 +4,9 @@
 
 LineGap is a web app for coloring-book creators. It runs in Safari on iPad, iPhone and computer, works offline, and your images never leave your device.
 
-- - **Use the app:** https://chiyohtomomi-cmd.github.io/LineGap/
+- **Use the app:** https://chiyohtomomi-cmd.github.io/LineGap/
 - **Get a license key:** https://linestudio5.gumroad.com/l/line-studio
-- **Support:** linestudio.app.kh@gmail.com
+- **Support:** tomomicreativehub@gmail.com
 
 ## Features
 - Finds every gap where color would leak, and shows its size
@@ -20,4 +20,6 @@ Free to try with 3 exports. A license key unlocks unlimited exports.
 [Terms & Refunds](terms.html) · [Privacy](privacy.html)
 
 ---
-© 2026 LineGap. All rights reserved. This code is published only so the app can be hosted. It is **not** open source: see [LICENSE](LICENSE).
+© 2026 Tomomi Creative Hub. All rights reserved. LineGap™ and its logo are trademarks of Tomomi Creative Hub. Unauthorized copying, sharing or resale of this software or its license keys is prohibited.
+
+This code is published only so the app can be hosted. It is **not** open source: see [LICENSE](LICENSE).
