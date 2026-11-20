@@ -1075,11 +1075,16 @@ SK.render = function (st, W, H, opt) {
   }
   const n = W * H, g = SK.resize(st.gray, st.w, st.h, W, H), a0 = SK.resize(st.alpha, st.w, st.h, W, H);
   const scale = W / st.w, alpha = new Uint8Array(n);
-  for (let i = 0; i < n; i++) alpha[i] = a0[i] > 127 ? 1 : 0;
+  // smooth the enlarged outline, so the small source's pixel steps don't show as a jagged edge
+  const aS = scale > 1.2 ? SK.blurF(a0, W, H, Math.min(8, Math.round(0.7 * scale))) : a0;
+  for (let i = 0; i < n; i++) alpha[i] = aS[i] > 127 ? 1 : 0;
   const out = new Uint8Array(n).fill(255);
   // the drawing = dark lines away from the old soft outline
   const ring = Math.max(2, (st.ring || 5) * 1.6 * scale), core = SK.shrink(alpha, W, H, ring), draw = new Uint8Array(n);
   for (let i = 0; i < n; i++) draw[i] = core[i] && g[i] < 150 ? 1 : 0;
+  // drop small loose bits far from the drawing (leftover pieces of a broken AI outline)
+  const junk = SK.looseBits(draw, W, H, Math.max(3, (st.ring || 5) * 1.2 * scale), alpha, Math.max(6, (st.ring || 5) * 3.5 * scale));
+  if (junk) for (let i = 0; i < n; i++) if (junk[i]) draw[i] = 0;
   let A = alpha;
   if (shape !== "orig") {
     const filled = SK.fillHoles(SK.grow(draw, W, H, Math.max(2, scale * 2)), W, H);
@@ -1106,10 +1111,56 @@ SK.render = function (st, W, H, opt) {
       A = B;
     }
   }
-  for (let i = 0; i < n; i++) if (draw[i] && A[i]) out[i] = 0;
-  const inner = SK.shrink(A, W, H, lw);
-  for (let i = 0; i < n; i++) if (A[i] && !inner[i]) out[i] = 0;
+  // the drawing keeps its own smooth (anti-aliased) lines: dark stays black, light paper turns white
+  for (let i = 0; i < n; i++) {
+    if (!A[i] || !core[i] || (junk && junk[i])) continue;
+    const v = g[i]; out[i] = v <= 110 ? 0 : v >= 235 ? 255 : Math.round((v - 110) * 255 / 125);
+  }
+  // cut line: an even, smooth band just inside the sticker edge
+  const inv = new Uint8Array(n); for (let i = 0; i < n; i++) inv[i] = A[i] ? 0 : 1;
+  const D = LS.edt(inv, W, H);
+  for (let i = 0; i < n; i++) if (A[i]) {
+    const c = lw + 1 - Math.sqrt(D[i]); if (c <= 0) continue;
+    const v = c >= 1 ? 0 : Math.round(255 * (1 - c)); if (v < out[i]) out[i] = v;
+  }
   return { gray: out, alpha: A, w: W, h: H };
+};
+// soft blur (3 box passes ≈ gaussian), returns 0–255 values
+SK.blurF = function (src, w, h, r) {
+  let a = Float32Array.from(src), b = new Float32Array(w * h);
+  for (let pass = 0; pass < 3; pass++) {
+    for (let y = 0; y < h; y++) { const o = y * w; let s = 0, c = 0;
+      for (let x = -r; x < w + r; x++) {
+        if (x + r < w) { s += a[o + Math.min(w - 1, x + r)]; c++; }
+        if (x - r - 1 >= 0) { s -= a[o + x - r - 1]; c--; }
+        if (x >= 0) b[o + x] = s / c;
+      } }
+    for (let x = 0; x < w; x++) { let s = 0, c = 0;
+      for (let y = -r; y < h + r; y++) {
+        if (y + r < h) { s += b[(y + r) * w + x]; c++; }
+        if (y - r - 1 >= 0) { s -= b[(y - r - 1) * w + x]; c--; }
+        if (y >= 0) a[y * w + x] = s / c;
+      } }
+  }
+  return a;
+};
+// small ink bits that sit away from the main drawing → mask to remove (null if none)
+SK.looseBits = function (ink, w, h, dist, inside, edge) {
+  const { lab, comps } = SK.components(ink, w, h); if (comps.length < 2) return null;
+  let total = 0; for (const c of comps) total += c.area;
+  const main = new Uint8Array(w * h), big = new Set(comps.filter(c => c.area >= total * 0.02).map(c => c.id));
+  if (!big.size) return null;
+  for (let i = 0; i < main.length; i++) if (big.has(lab[i])) main[i] = 1;
+  // anything inside the drawing's outline (eyes, dots) stays; only bits outside it and far away go
+  const near = SK.grow(SK.fillHoles(SK.grow(main, w, h, 3), w, h), w, h, dist), keep = new Set(big);
+  for (let i = 0; i < main.length; i++) if (lab[i] && near[i]) keep.add(lab[i]);
+  // only bits close to the sticker edge count as junk (that's where a broken AI outline leaves pieces)
+  if (inside && edge) { const inv = new Uint8Array(w * h); for (let i = 0; i < inv.length; i++) inv[i] = inside[i] ? 0 : 1;
+    const D = LS.edt(inv, w, h), e2 = edge * edge; for (let i = 0; i < inv.length; i++) if (lab[i] && D[i] > e2) keep.add(lab[i]); }
+  if (keep.size === comps.length) return null;
+  const drop = new Uint8Array(w * h); let any = false;
+  for (let i = 0; i < drop.length; i++) if (lab[i] && !keep.has(lab[i])) { drop[i] = 1; any = true; }
+  return any ? SK.grow(drop, w, h, 2) : null;
 };
 SK.flip = function (st) {
   const { w, h } = st, g = new Uint8Array(w * h), a = new Uint8Array(w * h);
