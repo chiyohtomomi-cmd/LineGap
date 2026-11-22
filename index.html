@@ -172,6 +172,7 @@ button:focus-visible,input:focus-visible,label:focus-within{outline:3px solid va
 .seg{display:inline-flex;background:var(--surface2);border:1px solid var(--line);border-radius:14px;padding:3px;gap:2px}
 .seg button{border:0;background:transparent;min-height:40px;padding:6px 14px;border-radius:11px;font-weight:600;cursor:pointer;font-size:14px}
 .seg button[aria-pressed="true"]{background:var(--green);color:var(--green-text)}
+.panel{overflow-x:hidden}.panel .slider{max-width:100%}.panel .slider input{flex:1;min-width:0;width:auto}.panel .slider .v{flex:none}.panel .seg{flex-wrap:wrap;max-width:100%}.panel .prow{flex-wrap:wrap}
 .fixbar{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;justify-content:space-between;background:var(--green-soft);border-radius:14px;padding:10px 12px;margin-bottom:8px;font-size:14px;font-weight:600}
 .note{font-size:13px;color:var(--yellow);margin:4px 0 8px}
 .tray{display:flex;justify-content:space-around;padding:4px 4px 6px;border-top:1px solid var(--line)}
@@ -1809,7 +1810,7 @@ function render() {
 }
 const toScreen = (x, y) => [x * E.view.s + E.view.ox, y * E.view.s + E.view.oy];
 const toImage = (sx, sy) => [(sx - E.view.ox) / E.view.s, (sy - E.view.oy) / E.view.s];
-let animOn = false, linePrev = null;
+let animOn = false, linePrev = null, shapePrev = null;
 function renderOverlay(t = performance.now()) {
   octx.setTransform(1, 0, 0, 1, 0, 0); octx.clearRect(0, 0, ov.width, ov.height);
   octx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -1853,6 +1854,14 @@ function renderOverlay(t = performance.now()) {
       if (pts.length === 2) { octx.lineCap = "round"; octx.lineWidth = Math.max(2, fillStroke() * E.view.s); octx.globalAlpha = .75; octx.beginPath(); octx.moveTo(pts[0][0], pts[0][1]); octx.lineTo(pts[1][0], pts[1][1]); octx.stroke(); octx.globalAlpha = 1; }
       for (const [x, y] of pts) { octx.beginPath(); octx.arc(x, y, 7, 0, 7); octx.fill(); }
     }
+  }
+  if (shapePrev && shapePrev.length > 1) {
+    octx.strokeStyle = "#000"; octx.lineCap = "round"; octx.lineJoin = "round"; octx.lineWidth = Math.max(1, E.size * E.view.s); octx.globalAlpha = .6;
+    octx.beginPath(); shapePrev.forEach((q, k) => { const [x, y] = toScreen(q[0], q[1]); k ? octx.lineTo(x, y) : octx.moveTo(x, y); }); octx.stroke(); octx.globalAlpha = 1;
+  }
+  if (E.tool === "draw" && E.pen === "arc" && E.arcAB) {
+    const green = getComputedStyle(document.documentElement).getPropertyValue("--green").trim(); octx.fillStyle = green;
+    for (const q of E.arcAB) { const [x, y] = toScreen(q[0], q[1]); octx.beginPath(); octx.arc(x, y, 7, 0, 7); octx.fill(); }
   }
   if (linePrev) {
     const [a, b] = toScreen(linePrev[0], linePrev[1]), [c, d] = toScreen(linePrev[2], linePrev[3]);
@@ -1972,7 +1981,7 @@ function selectGap(i) {
 document.querySelectorAll("#ed .tool").forEach(b => b.addEventListener("click", () => setTool(b.dataset.tool)));
 function setTool(t, force) {
   if (E.tool === t && !force) return;
-  E.tool = t; E.preview = null; E.pend = null; linePrev = null; setBefore(false); E.justClosed = null;
+  E.tool = t; E.preview = null; E.pend = null; linePrev = null; shapePrev = null; E.arcAB = null; setBefore(false); E.justClosed = null;
   if (t !== "draw") { E.fromGap = null; E.fromFill = false; }
   if (t !== "fill") { E.pick = null; E.fillSel = -1; }
   document.querySelectorAll("#ed .tool").forEach(b => b.setAttribute("aria-pressed", b.dataset.tool === t));
@@ -2024,6 +2033,7 @@ function renderPanel() {
           el("button", { className: "btn", textContent: "Ignore", on: { click: () => { E.p.ignored.push(g.key); gaps.splice(E.sel, 1); E.p.gapCount = gaps.length; E.p.status = gaps.length ? "gaps" : "closed"; markDirty(E.p); if (gaps.length) selectGap(Math.min(E.sel, gaps.length - 1)); else { E.sel = -1; renderPanel(); render(); toast("No gaps left."); } } } })),
         el("div", { className: "prow" },
           el("button", { className: "btn", textContent: "Next gap", disabled: gaps.length < 2, on: { click: () => selectGap((E.sel + 1) % gaps.length) } }),
+          armBtn(`Ignore all ${gaps.length}`, "Tap again to ignore all gaps", () => { const k = gaps.length; ignoreAll("gap"); fit(); toast(`Ignored ${k} gaps`); }),
           el("button", { className: "btn", textContent: "Done", on: { click: () => { E.sel = -1; fit(); renderPanel(); } } })));
       return;
     }
@@ -2038,6 +2048,7 @@ function renderPanel() {
             toast("Connected"); } } }),
           el("button", { className: "btn", textContent: "Ignore", on: { click: () => { E.p.ignoredLoose = E.p.ignoredLoose || []; E.p.ignoredLoose.push(itemKey(l)); L.splice(E.sel, 1); markDirty(E.p); if (L.length) selectItem("loose", Math.min(E.sel, L.length - 1)); else { E.sel = -1; renderPanel(); renderOverlay(); } } } }),
           el("button", { className: "btn", textContent: "Next", disabled: L.length < 2, on: { click: () => selectItem("loose", (E.sel + 1) % L.length) } }),
+          armBtn(`Ignore all ${L.length}`, "Tap again to ignore all", () => { const k = L.length; ignoreAll("loose"); fit(); toast(`Ignored ${k} loose ends`); }),
           el("button", { className: "btn", textContent: "Done", on: { click: () => { E.sel = -1; E.selKind = "gap"; E.connect = null; fit(); renderPanel(); } } })));
       return;
     }
@@ -2053,6 +2064,7 @@ function renderPanel() {
             toast("Filled"); } } }),
           el("button", { className: "btn", textContent: "Ignore", on: { click: () => { E.p.ignoredTiny = E.p.ignoredTiny || []; E.p.ignoredTiny.push(itemKey(q)); T.splice(E.sel, 1); markDirty(E.p); if (T.length) selectItem("tiny", Math.min(E.sel, T.length - 1)); else { E.sel = -1; renderPanel(); renderOverlay(); } } } }),
           el("button", { className: "btn", textContent: "Next", disabled: T.length < 2, on: { click: () => selectItem("tiny", (E.sel + 1) % T.length) } }),
+          armBtn(`Ignore all ${T.length}`, "Tap again to ignore all", () => { const k = T.length; ignoreAll("tiny"); fit(); toast(`Ignored ${k} tiny shapes`); }),
           el("button", { className: "btn", textContent: "Done", on: { click: () => { E.sel = -1; E.selKind = "gap"; fit(); renderPanel(); } } })));
       return;
     }
@@ -2073,6 +2085,7 @@ function renderPanel() {
             if (!b.dataset.armed) { b.dataset.armed = "1"; b.textContent = "Tap again to fill all"; setTimeout(() => { if (b.isConnected) { delete b.dataset.armed; b.textContent = `Fill all ${E.res.tiny.length} black`; } }, 3000); return; }
             const n = E.res.tiny.length; pushUndo(snap()); fillTiny(E.res.tiny); afterEdit({ now: true }); toast(`Filled ${n} tiny shapes. Undo if you don’t like it.`);
           } } })) : null) : null,
+      ignoreAllRow(),
       el("div", { className: "prow" }, el("button", { className: "btn", textContent: "Check again", on: { click: () => runCheck(false) } })));
     return;
   }
@@ -2111,12 +2124,16 @@ function renderPanel() {
       el("span", { textContent: "Fixing a leak by hand. Draw your line, then test again." }),
       el("button", { className: "btn primary", textContent: "Back to fill test", on: { click: () => setTool("fill") } })));
     const seg = el("div", { className: "seg", role: "group", "aria-label": "Drawing tool" });
-    for (const [k, txt] of [["pen", "Pen"], ["eraser", "Eraser"], ["line", "Straight line"]])
-      seg.append(el("button", { type: "button", textContent: txt, "aria-pressed": String(E.pen === k), on: { click: () => { E.pen = k; renderPanel(); } } }));
+    for (const [k, txt] of [["pen", "Pen"], ["eraser", "Eraser"], ["line", "Line"], ["arc", "Arc"], ["circle", "Circle"]])
+      seg.append(el("button", { type: "button", textContent: txt, "aria-pressed": String(E.pen === k), on: { click: () => { E.pen = k; E.arcAB = null; shapePrev = null; renderPanel(); renderOverlay(); } } }));
+    const shapeTip = E.pen === "arc" ? (E.arcAB ? "Now drag anywhere to bend the arc. Let go to draw it." : "Arc: drag from where the arc starts to where it ends.")
+      : E.pen === "circle" ? "Circle: put your finger on the center and drag out to the size you want." : E.pen === "line" ? "Line: drag from start to end." : null;
     const eseg = el("div", { className: "seg", role: "group", "aria-label": "What to erase" });
     for (const [k, txt] of [["orig", "Original"], ["new", "New lines"], ["both", "Both"]])
       eseg.append(el("button", { type: "button", textContent: txt, "aria-pressed": String(E.erase === k), on: { click: () => { E.erase = k; renderPanel(); } } }));
     add(el("div", { className: "prow" }, seg),
+      shapeTip ? el("p", { className: "note", textContent: shapeTip }) : null,
+      E.pen === "arc" && E.arcAB ? el("div", { className: "prow" }, el("button", { className: "btn", textContent: "Start the arc again", on: { click: () => { E.arcAB = null; renderPanel(); renderOverlay(); } } })) : null,
       E.pen === "eraser" ? el("div", { className: "prow" }, el("span", { className: "slider", textContent: "Erase:" }), eseg) : null,
       el("div", { className: "prow" }, chip("#1E73EB", "Show new lines in blue", E.colorNew, () => { E.colorNew = !E.colorNew; renderPanel(); paintLayer(); })),
       el("div", { className: "slider" }, el("small", { textContent: "Size" }),
@@ -2241,6 +2258,31 @@ function fillPanel(add) {
       el("button", { className: "btn", textContent: "Clear colors", disabled: !E.fills.length, on: { click: () => { E.fills = []; E.fillLab = null; E.fillLast = 0; E.fillSel = -1; paintLayer(); renderPanel(); } } })),
     el("p", { className: "note", textContent: "Test colors are only for checking. They are never saved or exported. Fixes you make here are saved like any other fix (Undo works)." }));
 }
+// ignore everything the check found (each kind), with a second tap to confirm; and a way back
+function ignoreAll(kind) {
+  const p = E.p, r = E.res; if (!r) return;
+  if (kind === "gap") { p.ignored = p.ignored || []; for (const g of r.gaps) p.ignored.push(g.key); r.gaps = []; p.gapCount = 0; p.status = "closed"; }
+  if (kind === "loose") { p.ignoredLoose = p.ignoredLoose || []; for (const l of r.loose) p.ignoredLoose.push(itemKey(l)); r.loose = []; }
+  if (kind === "tiny") { p.ignoredTiny = p.ignoredTiny || []; for (const q of r.tiny) p.ignoredTiny.push(itemKey(q)); r.tiny = []; }
+  E.sel = -1; E.selKind = "gap"; markDirty(p); renderPanel(); renderOverlay();
+}
+function armBtn(text, armed, fn) {
+  return el("button", { className: "btn", textContent: text, on: { click: ev => {
+    const b = ev.currentTarget;
+    if (!b.dataset.armed) { b.dataset.armed = "1"; b.textContent = armed; setTimeout(() => { if (b.isConnected) { delete b.dataset.armed; b.textContent = text; } }, 3000); return; }
+    fn();
+  } } });
+}
+function ignoreAllRow() {
+  const r = E.res, p = E.p; if (!r) return null;
+  const n = (p.ignored || []).length + (p.ignoredLoose || []).length + (p.ignoredTiny || []).length;
+  const row = el("div", { className: "prow" });
+  if (r.gaps.length) row.append(armBtn(`Ignore all ${r.gaps.length} gaps`, "Tap again to ignore all gaps", () => { const k = r.gaps.length; ignoreAll("gap"); toast(`Ignored ${k} gaps`); }));
+  if (r.loose.length) row.append(armBtn(`Ignore all ${r.loose.length} loose ends`, "Tap again to ignore all", () => { const k = r.loose.length; ignoreAll("loose"); toast(`Ignored ${k} loose ends`); }));
+  if (r.tiny.length) row.append(armBtn(`Ignore all ${r.tiny.length} tiny shapes`, "Tap again to ignore all", () => { const k = r.tiny.length; ignoreAll("tiny"); toast(`Ignored ${k} tiny shapes`); }));
+  if (n) row.append(el("button", { className: "btn", textContent: `Show ${n} ignored again`, on: { click: () => { p.ignored = []; p.ignoredLoose = []; p.ignoredTiny = []; markDirty(p); runCheck(false); } } }));
+  return row.childNodes.length ? row : null;
+}
 function setPend(b, e) {
   E.pend = { b, e };
   E.preview = new Uint8Array(E.gray.length); compose(b || E.base, e || E.edit, E.preview);
@@ -2293,7 +2335,7 @@ function scheduleLines() {
 // ---------- gestures: one finger draws (or taps), two fingers move & zoom ----------
 const ptrs = new Map(); let gesture = null, stroke = null, tapStart = null, locked = false;
 function local(e) { const r = stage.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
-function cancelStroke() { if (stroke) { if (stroke.rect) writePatch(makePatch(stroke.rect, E.tmpB, E.tmpE)); stroke = null; linePrev = null; paintLayer(); } }
+function cancelStroke() { if (stroke) { if (stroke.rect) writePatch(makePatch(stroke.rect, E.tmpB, E.tmpE)); stroke = null; linePrev = null; shapePrev = null; paintLayer(); } }
 function strokeBegin() {
   if (!E.tmpB) { E.tmpB = new Uint8Array(E.base.length); E.tmpE = new Uint8Array(E.edit.length); }
   E.tmpB.set(E.base); E.tmpE.set(E.edit);
@@ -2316,7 +2358,8 @@ stage.addEventListener("pointerdown", e => {
     const [x, y] = toImage(sx, sy);
     strokeBegin();
     stroke = { id: e.pointerId, rect: null, last: [x, y], start: [x, y], moved: false };
-    if (E.pen !== "line") drawSeg(x, y, x, y);
+    if (E.pen === "arc" && E.arcAB) { shapePrev = arcPoints(E.arcAB[0], [x, y], E.arcAB[1]); renderOverlay(); }
+    else if (E.pen !== "line" && E.pen !== "arc" && E.pen !== "circle") drawSeg(x, y, x, y);
   } else tapStart = { id: e.pointerId, x: sx, y: sy, v: { ...E.view }, moved: false };
 });
 stage.addEventListener("pointermove", e => {
@@ -2332,7 +2375,9 @@ stage.addEventListener("pointermove", e => {
   const [sx, sy] = ptrs.get(e.pointerId);
   if (stroke && stroke.id === e.pointerId) {
     const [x, y] = toImage(sx, sy);
-    if (E.pen === "line") { linePrev = [stroke.start[0], stroke.start[1], x, y]; renderOverlay(); }
+    if (E.pen === "line" || (E.pen === "arc" && !E.arcAB)) { linePrev = [stroke.start[0], stroke.start[1], x, y]; renderOverlay(); }
+    else if (E.pen === "arc") { shapePrev = arcPoints(E.arcAB[0], [x, y], E.arcAB[1]); renderOverlay(); }
+    else if (E.pen === "circle") { shapePrev = circlePoints(stroke.start, Math.hypot(x - stroke.start[0], y - stroke.start[1])); renderOverlay(); }
     else { drawSeg(stroke.last[0], stroke.last[1], x, y); stroke.last = [x, y]; }
     stroke.moved = true; return;
   }
@@ -2349,6 +2394,18 @@ function endPtr(e, cancelled) {
   if (!ptrs.size) locked = false;
   if (stroke && stroke.id === e.pointerId) {
     if (cancelled) { cancelStroke(); return; }
+    if (E.pen === "arc" || E.pen === "circle") {
+      const [x, y] = toImage(pos[0], pos[1]); linePrev = null; shapePrev = null;
+      let pts = null;
+      if (E.pen === "arc" && !E.arcAB) {
+        if (Math.hypot(x - stroke.start[0], y - stroke.start[1]) > 1) { E.arcAB = [stroke.start, [x, y]]; renderPanel(); }
+        stroke = null; renderOverlay(); return;
+      }
+      if (E.pen === "arc") { pts = arcPoints(E.arcAB[0], [x, y], E.arcAB[1]); E.arcAB = null; renderPanel(); }
+      else { const r = Math.hypot(x - stroke.start[0], y - stroke.start[1]); if (r > 0.8) pts = circlePoints(stroke.start, r); }
+      if (!pts) { stroke = null; renderOverlay(); return; }
+      for (let k = 1; k < pts.length; k++) drawSeg(pts[k - 1][0], pts[k - 1][1], pts[k][0], pts[k][1]);
+    }
     if (E.pen === "line") {
       const [x, y] = toImage(pos[0], pos[1]); linePrev = null;
       if (Math.hypot(x - stroke.start[0], y - stroke.start[1]) > 0.5) drawSeg(stroke.start[0], stroke.start[1], x, y); else { stroke = null; renderOverlay(); return; }
@@ -2362,6 +2419,24 @@ stage.addEventListener("pointerup", e => endPtr(e, false));
 stage.addEventListener("pointercancel", e => endPtr(e, true));
 stage.addEventListener("wheel", e => { e.preventDefault(); const [sx, sy] = local(e); zoomAt(Math.exp(-e.deltaY * 0.0015), sx, sy); }, { passive: false });
 ["gesturestart", "gesturechange", "touchmove"].forEach(t => stage.addEventListener(t, e => e.preventDefault(), { passive: false }));
+// points along a circle, and along the arc from a through c to b
+function circlePoints(c, r) {
+  const n = Math.max(24, Math.ceil(2 * Math.PI * r / 1.5)), out = [];
+  for (let k = 0; k <= n; k++) { const t = k / n * 2 * Math.PI; out.push([c[0] + r * Math.cos(t), c[1] + r * Math.sin(t)]); }
+  return out;
+}
+function arcPoints(a, c, b) {
+  const d = 2 * (a[0] * (c[1] - b[1]) + c[0] * (b[1] - a[1]) + b[0] * (a[1] - c[1]));
+  if (Math.abs(d) < 1e-6) return [a, b];   // in a straight row → straight line
+  const sa = a[0] * a[0] + a[1] * a[1], sc = c[0] * c[0] + c[1] * c[1], sb = b[0] * b[0] + b[1] * b[1];
+  const ux = (sa * (c[1] - b[1]) + sc * (b[1] - a[1]) + sb * (a[1] - c[1])) / d, uy = (sa * (b[0] - c[0]) + sc * (a[0] - b[0]) + sb * (c[0] - a[0])) / d;
+  const r = Math.hypot(a[0] - ux, a[1] - uy); if (r > 1e5) return [a, b];
+  const ang = q => Math.atan2(q[1] - uy, q[0] - ux), TAU = 2 * Math.PI, norm = v => ((v % TAU) + TAU) % TAU;
+  const t0 = ang(a), tb = norm(ang(b) - t0), tc = norm(ang(c) - t0), sweep = tc <= tb ? tb : tb - TAU;
+  const n = Math.max(12, Math.ceil(Math.abs(sweep) * r / 1.5)), out = [];
+  for (let k = 0; k <= n; k++) { const t = t0 + sweep * k / n; out.push([ux + r * Math.cos(t), uy + r * Math.sin(t)]); }
+  return out;
+}
 function drawSeg(x1, y1, x2, y2) {
   const r = Math.max(0.5, E.size / 2);
   let rect;
