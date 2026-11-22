@@ -397,6 +397,7 @@ a.btn{color:inherit;text-decoration:none;display:inline-flex;align-items:center}
       <button class="tool" data-tool="check" aria-pressed="true"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>Check</button>
       <button class="tool" data-tool="close" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M4 12h5M15 12h5"/><path d="M9 12h6" stroke-dasharray="2 2"/><circle cx="12" cy="12" r="8"/></svg>Close</button>
       <button class="tool" data-tool="draw" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M4 20l4-1 11-11-3-3L5 16z"/><path d="M14 6l3 3"/></svg>Draw</button>
+      <button class="tool" data-tool="fill" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M5 11l7-7 7 7-7 7z"/><path d="M5 11h14"/><path d="M20 15c0 1.5-1 2.5-1 3.5a1 1 0 0 0 2 0c0-1-1-2-1-3.5z" fill="currentColor"/></svg>Fill test</button>
       <button class="tool" data-tool="clean" aria-pressed="false"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor"/></svg>Clean</button>
     </nav>
   </div>
@@ -1735,6 +1736,7 @@ async function openEditor(idx) {
     if (!px) { toast("Couldn’t open this page. Try opening the picture again."); return; }
     const f = scaleOf(p.w);
     Object.assign(E, { stroke: 0, idx, p, w: p.w, h: p.h, gray: px.gray, base: px.base, edit: px.edit, pend: null, opened: px.gray.slice(), undo: [], redo: [], undoBytes: 0, res: null, sel: -1, preview: null, before: false, lineVal: 0,
+      fills: [], fillLab: null, fillLast: 0, fillSel: -1, pick: null, fromFill: false,
       f, tmpB: null, tmpE: null, closeN: Math.round(4 * f), closeMax: Math.round(8 * f), size: Math.round(4 * f), sizeMax: Math.round(24 * f) });
     openPage(p, idx);
   } finally { opening = false; }
@@ -1767,11 +1769,13 @@ function paintLayer(rect) {
   const arr = shown(), w = E.w, d = limg.data;
   const [x0, y0, x1, y1] = rect || [0, 0, E.w - 1, E.h - 1];
   const tint = E.colorNew && arr === E.gray && E.tool !== "lines" && E.tool !== "clean";
+  const fl = E.tool === "fill" && arr === E.gray ? E.fillLab : null;
   for (let y = y0; y <= y1; y++) {
     let i = y * w + x0, j = i * 4;
     for (let x = x0; x <= x1; x++, i++, j += 4) {
       const v = arr[i];
-      if (tint && E.edit[i] < E.base[i] && E.edit[i] < 250) { const a = (255 - E.edit[i]) / 255; d[j] = 255 - 225 * a; d[j + 1] = 255 - 140 * a; d[j + 2] = 255 - 20 * a; }
+      if (fl && fl[i]) { const c = FILL_RGB[E.fills[fl[i] - 1].c], k = v / 255; d[j] = c[0] * k; d[j + 1] = c[1] * k; d[j + 2] = c[2] * k; }
+      else if (tint && E.edit[i] < E.base[i] && E.edit[i] < 250) { const a = (255 - E.edit[i]) / 255; d[j] = 255 - 225 * a; d[j + 1] = 255 - 140 * a; d[j + 2] = 255 - 20 * a; }
       else { d[j] = d[j + 1] = d[j + 2] = v; }
     }
   }
@@ -1827,6 +1831,20 @@ function renderOverlay(t = performance.now()) {
       octx.fillStyle = "#fff"; octx.fillText(label, bx + 4, by + 11.5);
     });
   }
+  if (E.tool === "fill" && !E.before) {
+    const leaks = fillLeaks(E.fillLast);
+    leaks.forEach(i => {
+      const g = E.res.gaps[i], [x, y] = toScreen((g.x1 + g.x2) / 2 + .5, (g.y1 + g.y2) / 2 + .5), sel = i === E.fillSel;
+      octx.strokeStyle = red; octx.lineWidth = sel ? 4 : 3; octx.beginPath(); octx.arc(x, y, (sel ? 18 : 14) + Math.sin(t / 260) * 3, 0, 7); octx.stroke();
+      if (sel) { const [a, b] = toScreen(g.x1 + .5, g.y1 + .5), [c, d] = toScreen(g.x2 + .5, g.y2 + .5); octx.setLineDash([4, 3]); octx.lineWidth = 2.5; octx.strokeStyle = green; octx.beginPath(); octx.moveTo(a, b); octx.lineTo(c, d); octx.stroke(); octx.setLineDash([]); }
+    });
+    if (E.pick) {
+      octx.fillStyle = green; octx.strokeStyle = green;
+      const pts = [E.pick.a, E.pick.b].filter(Boolean).map(q => toScreen(q[0], q[1]));
+      if (pts.length === 2) { octx.lineCap = "round"; octx.lineWidth = Math.max(2, fillStroke() * E.view.s); octx.globalAlpha = .75; octx.beginPath(); octx.moveTo(pts[0][0], pts[0][1]); octx.lineTo(pts[1][0], pts[1][1]); octx.stroke(); octx.globalAlpha = 1; }
+      for (const [x, y] of pts) { octx.beginPath(); octx.arc(x, y, 7, 0, 7); octx.fill(); }
+    }
+  }
   if (linePrev) {
     const [a, b] = toScreen(linePrev[0], linePrev[1]), [c, d] = toScreen(linePrev[2], linePrev[3]);
     octx.strokeStyle = E.pen === "eraser" ? gray : "#000"; octx.lineCap = "round"; octx.lineWidth = Math.max(1, E.size * E.view.s);
@@ -1835,7 +1853,7 @@ function renderOverlay(t = performance.now()) {
 }
 function startAnim() {
   if (animOn) return; animOn = true;
-  const loop = t => { if (!animOn) return; if (E.res && E.res.gaps.length && !E.before && E.tool !== "lines" && E.tool !== "clean") renderOverlay(t); requestAnimationFrame(loop); };
+  const loop = t => { if (!animOn) return; if (E.res && E.res.gaps.length && !E.before && E.tool !== "lines" && E.tool !== "clean" && (E.tool !== "fill" || E.fillLast)) renderOverlay(t); requestAnimationFrame(loop); };
   requestAnimationFrame(loop);
 }
 function stopAnim() { animOn = false; }
@@ -1876,6 +1894,7 @@ function updateUndo() { $("undoBtn").disabled = !E.undo.length; $("redoBtn").dis
 let recheckT = null;
 function afterEdit(opts = {}) {
   const p = E.p; E.thumbStale = true; markPx(); updateUndo();
+  if (E.tool === "fill" && E.fills && E.fills.length) fillRefresh();
   if (!opts.noPaint) paintLayer();
   if (E.res || opts.recheck) {
     clearTimeout(recheckT);
@@ -1911,6 +1930,7 @@ function runCheck(silent, keepSel) {
     if (best >= 0) { if (keepSel) selectItem(prevKind, best); else { E.selKind = prevKind; E.sel = best; if (prevKind === "loose") E.connect = LS.findConnect(E.gray, E.w, E.h, list[best], THR, r.stroke, Math.round(30 * E.f)); } }
   }
   if (E.tool === "close") buildClosePreview();
+  if (E.tool === "fill") { E.fillSel = -1; fillRefresh(); paintLayer(); }
   renderPanel(); render(); startAnim();
   if (!silent) toast(r.gaps.length ? `${r.gaps.length} ${r.gaps.length === 1 ? "gap" : "gaps"} found` : "No gaps. This page is closed.");
 }
@@ -1944,13 +1964,15 @@ document.querySelectorAll("#ed .tool").forEach(b => b.addEventListener("click", 
 function setTool(t, force) {
   if (E.tool === t && !force) return;
   E.tool = t; E.preview = null; E.pend = null; linePrev = null; setBefore(false); E.justClosed = null;
-  if (t !== "draw") E.fromGap = null;
+  if (t !== "draw") { E.fromGap = null; E.fromFill = false; }
+  if (t !== "fill") { E.pick = null; E.fillSel = -1; }
   document.querySelectorAll("#ed .tool").forEach(b => b.setAttribute("aria-pressed", b.dataset.tool === t));
   if (t === "close") { if (!E.res) runCheck(true); buildClosePreview(); }
   if (t === "lines") { E.lineVal = 0; }
   E.pend = null;
   if (t === "clean") buildCleanPreview();
   if (t === "close") buildClosePreview();
+  if (t === "fill") { if (!E.res) runCheck(true); fillRefresh(); }
   renderPanel(); paintLayer();
 }
 function el(tag, props = {}, ...kids) { const e = document.createElement(tag); for (const k in props) { if (k === "on") for (const ev in props.on) e.addEventListener(ev, props.on[ev]); else if (k in e && k !== "list") e[k] = props[k]; else e.setAttribute(k, props[k]); } for (const c of kids) if (c != null) e.append(c); return e; }
@@ -2076,6 +2098,9 @@ function renderPanel() {
           if (d < 6) { selectGap(i); toast("This gap is still open"); } else { E.justClosed = pt; renderPanel(); toast("Gap fixed ✓"); } }
         else toast("No gaps left ✓");
       } } })));
+    if (E.fromFill) add(el("div", { className: "fixbar" },
+      el("span", { textContent: "Fixing a leak by hand. Draw your line, then test again." }),
+      el("button", { className: "btn primary", textContent: "Back to fill test", on: { click: () => setTool("fill") } })));
     const seg = el("div", { className: "seg", role: "group", "aria-label": "Drawing tool" });
     for (const [k, txt] of [["pen", "Pen"], ["eraser", "Eraser"], ["line", "Straight line"]])
       seg.append(el("button", { type: "button", textContent: txt, "aria-pressed": String(E.pen === k), on: { click: () => { E.pen = k; renderPanel(); } } }));
@@ -2091,6 +2116,7 @@ function renderPanel() {
       el("p", { textContent: "New lines and closed gaps go on their own layer, so you can erase them without touching the original drawing. One finger draws. Two fingers move and zoom." }));
     return;
   }
+  if (t === "fill") { fillPanel(add); return; }
   if (t === "clean") {
     add(el("h3", { textContent: "Make pure black and white" }),
       el("p", { textContent: "Removes gray noise and soft edges, so every pixel is pure black or pure white." }),
@@ -2102,6 +2128,109 @@ function renderPanel() {
     add(el("h3", { textContent: "Export style", style: "margin-top:14px" }), el("div", { className: "prow" }, xs),
       el("p", { textContent: exportMode === "smooth" ? "Smooth edges look best (no jagged pixels). Closed gaps stay closed." : "Pure black & white has no gray at all, but edges look jagged on small pages." }));
   }
+}
+// ---------- fill test: tap to color like a coloring app (only on screen; never saved or exported) ----------
+const FILL_COLORS = ["#F7A8B8", "#8FCBF2", "#FFD45E", "#9EDC97", "#C3AEF2", "#FFAE73"];
+const FILL_RGB = FILL_COLORS.map(h => [1, 3, 5].map(k => parseInt(h.slice(k, k + 2), 16)));
+let fillColor = 0;
+const fillStroke = () => Math.max(1, E.res ? E.res.stroke : 2);
+function fillRefresh() {
+  const n = E.w * E.h, lab = new Uint8Array(n), g = E.gray, w = E.w, h = E.h, stack = new Int32Array(n);
+  E.fills.forEach((f, k) => {
+    const id = k + 1, s0 = f.y * w + f.x; f.area = 0; f.edge = false;
+    if (g[s0] < THR || lab[s0]) { f.area = lab[s0] ? -1 : 0; return; }
+    let sp = 0; stack[sp++] = s0; lab[s0] = id;
+    while (sp) {
+      const i = stack[--sp], x = i % w, y = (i - x) / w; f.area++;
+      if (x === 0 || y === 0 || x === w - 1 || y === h - 1) f.edge = true;
+      if (x > 0 && !lab[i - 1] && g[i - 1] >= THR) { lab[i - 1] = id; stack[sp++] = i - 1; }
+      if (x < w - 1 && !lab[i + 1] && g[i + 1] >= THR) { lab[i + 1] = id; stack[sp++] = i + 1; }
+      if (y > 0 && !lab[i - w] && g[i - w] >= THR) { lab[i - w] = id; stack[sp++] = i - w; }
+      if (y < h - 1 && !lab[i + w] && g[i + w] >= THR) { lab[i + w] = id; stack[sp++] = i + w; }
+    }
+  });
+  E.fillLab = lab;
+}
+// gaps the color of fill k runs through = where it leaks
+function fillLeaks(k) {
+  if (!k || !E.res || !E.fillLab) return [];
+  const out = [], L = E.fillLab, w = E.w, h = E.h;
+  E.res.gaps.forEach((g, i) => {
+    const cx = Math.round((g.x1 + g.x2) / 2), cy = Math.round((g.y1 + g.y2) / 2);
+    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+      const x = cx + dx, y = cy + dy; if (x < 0 || y < 0 || x >= w || y >= h) continue;
+      if (L[y * w + x] === k) { out.push(i); return; }
+    }
+  });
+  return out;
+}
+function fillTap(sx, sy) {
+  const [ix, iy] = toImage(sx, sy), x = Math.floor(ix), y = Math.floor(iy);
+  if (E.pick) {
+    if (x < 0 || y < 0 || x >= E.w || y >= E.h) return;
+    if (!E.pick.a || E.pick.b) E.pick = { a: [ix, iy], b: null }; else E.pick.b = [ix, iy];
+    renderPanel(); renderOverlay(); return;
+  }
+  // tap on a red leak circle → choose how to close that gap
+  let best = -1, bd = 26;
+  for (const i of fillLeaks(E.fillLast)) { const g = E.res.gaps[i], [gx, gy] = toScreen((g.x1 + g.x2) / 2 + .5, (g.y1 + g.y2) / 2 + .5), d = Math.hypot(gx - sx, gy - sy); if (d < bd) { bd = d; best = i; } }
+  if (best >= 0) { E.fillSel = best; const g = E.res.gaps[best]; zoomTo((g.x1 + g.x2) / 2 + .5, (g.y1 + g.y2) / 2 + .5, Math.min(6, Math.max(E.fitS * 5, 1.6))); renderPanel(); renderOverlay(); return; }
+  if (x < 0 || y < 0 || x >= E.w || y >= E.h) return;
+  if (E.gray[y * E.w + x] < THR) { toast("That’s a line. Tap inside a white space."); return; }
+  const k = E.fillLab ? E.fillLab[y * E.w + x] : 0;
+  if (k) { E.fills[k - 1].c = fillColor; E.fillLast = k; }
+  else { if (E.fills.length >= 250) E.fills.shift(); E.fills.push({ x, y, c: fillColor }); fillRefresh(); E.fillLast = E.fills.length; }
+  E.fillSel = -1; fillColor = (fillColor + 1) % FILL_COLORS.length;
+  paintLayer(); renderPanel(); startAnim();
+}
+function fillCloseGaps(list) {
+  if (!list.length) return;
+  pushUndo(snap()); LS.drawGaps(E.edit, E.w, E.h, list.map(i => E.res.gaps[i]), E.res.stroke); compose(E.base, E.edit, E.gray);
+  E.fillSel = -1; afterEdit({ now: true }); toast(list.length === 1 ? "Gap closed. Color test updated." : `Closed ${list.length} gaps. Color test updated.`);
+}
+function fillPanel(add) {
+  if (E.pick) {
+    const ready = E.pick.a && E.pick.b;
+    add(el("h3", { textContent: "Connect two points" }),
+      el("p", { textContent: !E.pick.a ? "Tap where the new line should start." : !E.pick.b ? "Now tap where it should end." : "This is the line that will be added (green). Tap again to move it." }),
+      el("div", { className: "prow" },
+        el("button", { className: "btn primary", textContent: "Add line", disabled: !ready, on: { click: () => {
+          const [a, b] = [E.pick.a, E.pick.b]; pushUndo(snap());
+          LS.capsule(E.edit, E.w, E.h, a[0], a[1], b[0], b[1], Math.max(0.9, fillStroke() / 2), "ink"); compose(E.base, E.edit, E.gray);
+          E.pick = null; E.fillSel = -1; afterEdit({ now: true }); toast("Line added. Color test updated.");
+        } } }),
+        el("button", { className: "btn", textContent: "Cancel", on: { click: () => { E.pick = null; renderPanel(); renderOverlay(); } } })));
+    return;
+  }
+  const leaks = fillLeaks(E.fillLast), cur = E.fills[E.fillLast - 1];
+  if (E.fillSel >= 0 && E.res && E.res.gaps[E.fillSel]) {
+    const g = E.res.gaps[E.fillSel];
+    add(el("h3", { textContent: `Leak: gap ${E.fillSel + 1}` }),
+      el("p", { textContent: `${g.size} px wide. Choose how to close it. The green dashes show the app’s line.` }),
+      el("div", { className: "prow" },
+        el("button", { className: "btn primary", textContent: "Close with this line", on: { click: () => fillCloseGaps([E.fillSel]) } }),
+        el("button", { className: "btn", textContent: "Connect two points", on: { click: () => { E.pick = { a: null, b: null }; renderPanel(); renderOverlay(); } } }),
+        el("button", { className: "btn", textContent: "Draw my own", on: { click: () => { E.pen = "pen"; E.size = Math.max(1, Math.round(fillStroke())); E.fromFill = true; setTool("draw"); } } })),
+      el("div", { className: "prow" }, el("button", { className: "btn", textContent: "Back", on: { click: () => { E.fillSel = -1; renderPanel(); renderOverlay(); } } })));
+    return;
+  }
+  const sw = el("div", { className: "prow" });
+  FILL_COLORS.forEach((c, i) => sw.append(el("button", { type: "button", className: "chip", "aria-pressed": String(i === fillColor), "aria-label": "Test color " + (i + 1),
+    on: { click: () => { fillColor = i; renderPanel(); } } }, el("span", { className: "dot", style: "background:" + c + ";width:16px;height:16px" }))));
+  add(el("h3", { textContent: "Fill test" }),
+    el("p", { textContent: "Tap any white space to color it, like a coloring app. If the color spreads too far, LineGap shows where it leaks." }), sw);
+  if (cur && cur.area > 0) {
+    const big = cur.area > E.w * E.h * 0.35;
+    if (leaks.length) add(el("p", { className: "note", textContent: `This color leaks through ${leaks.length} ${leaks.length === 1 ? "gap" : "gaps"} (red circles). Tap a circle to choose how to close it, or close all.` }),
+      el("div", { className: "prow" },
+        el("button", { className: "btn primary", textContent: leaks.length === 1 ? "Close this gap" : `Close all ${leaks.length}`, on: { click: () => fillCloseGaps(leaks) } }),
+        el("button", { className: "btn", textContent: "Connect two points", on: { click: () => { E.pick = { a: null, b: null }; renderPanel(); renderOverlay(); } } })));
+    else add(el("p", { textContent: big ? "No small gap found, but this color covers a big part of the page. If it spread where it shouldn’t, close the opening yourself: Connect two points." : "No small gaps in this color ✓ If it still spread where it shouldn’t, close the opening yourself: Connect two points." }),
+      el("div", { className: "prow" }, el("button", { className: "btn", textContent: "Connect two points", on: { click: () => { E.pick = { a: null, b: null }; renderPanel(); renderOverlay(); } } })));
+  }
+  add(el("div", { className: "prow" },
+      el("button", { className: "btn", textContent: "Clear colors", disabled: !E.fills.length, on: { click: () => { E.fills = []; E.fillLab = null; E.fillLast = 0; E.fillSel = -1; paintLayer(); renderPanel(); } } })),
+    el("p", { className: "note", textContent: "Test colors are only for checking. They are never saved or exported. Fixes you make here are saved like any other fix (Undo works)." }));
 }
 function setPend(b, e) {
   E.pend = { b, e };
@@ -2238,6 +2367,7 @@ function drawSeg(x1, y1, x2, y2) {
   }
 }
 function handleTap(sx, sy) {
+  if (E.tool === "fill" && !E.before) return fillTap(sx, sy);
   if (!E.res || E.before) return;
   let best = -1, bd = 24;
   E.res.gaps.forEach((g, i) => { const [x, y] = toScreen((g.x1 + g.x2) / 2 + .5, (g.y1 + g.y2) / 2 + .5); const d = Math.hypot(x - sx, y - sy); if (d < bd) { bd = d; best = i; } });
