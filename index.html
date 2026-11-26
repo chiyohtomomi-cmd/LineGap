@@ -70,6 +70,11 @@ button:focus-visible,input:focus-visible,label:focus-within{outline:3px solid va
 .card .size{font-size:12px;color:var(--muted)}
 .label{font-size:14px;color:var(--muted);min-width:88px}
 #exportSettings{margin:-4px 0 14px}
+.savesize .seg{flex-wrap:wrap}.savesize .customw{width:110px;padding:8px 10px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:inherit}
+.savenote{margin:4px 0 10px}
+#saveSheet{position:fixed;inset:0;z-index:80;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center}
+#saveSheet .box{background:var(--surface);color:var(--ink);width:min(560px,100%);border-radius:18px 18px 0 0;padding:18px 18px calc(18px + env(safe-area-inset-bottom,0px));max-height:85vh;overflow:auto}
+#saveSheet h3{margin:0 0 10px}
 .backup{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:12px 14px;margin:0 0 14px;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;justify-content:space-between}
 .backuptext{display:flex;flex-direction:column;font-size:14px;min-width:200px;flex:1}
 .backuptext span{color:var(--muted)}
@@ -340,6 +345,7 @@ a.btn{color:inherit;text-decoration:none;display:inline-flex;align-items:center}
       <div id="shSel"></div>
       <div id="shTray"></div>
       <h3 class="phead">Export</h3>
+      <div id="stkSaveSize"></div>
       <div class="libactions">
         <button class="btn primary" id="shPdf">PDF (all sheets)</button>
         <button class="btn" id="shPng">Sheets PNG (ZIP)</button>
@@ -1569,8 +1575,132 @@ $("restoreIn").addEventListener("change", async e => {
 let exportMode = "smooth", exportSize = "orig";
 try { exportMode = localStorage.getItem("ls-export") || "smooth"; exportSize = localStorage.getItem("ls-size") || "orig"; } catch (e) {}
 function setExportMode(m) { exportMode = m; try { localStorage.setItem("ls-export", m); } catch (e) {} renderExportSettings(); }
-function setExportSize(m) { exportSize = m; try { localStorage.setItem("ls-size", m); } catch (e) {} renderExportSettings(); }
-const SIZES = { orig: ["Original (print)", 0], app: ["App 900", 900], video: ["Video 1080", 1080] };
+function setExportSize(m) { exportSize = m; try { localStorage.setItem("ls-size", m); } catch (e) {} }
+const SIZES = { orig: ["Original (print)", 0], app: ["App 900", 900], video: ["Video 1080", 1080],
+  a4: ["Print A4 · 300 dpi", 2480], a4hi: ["Print A4 · 600 dpi", 4960], custom: ["Custom width", 0] };
+// ---------- Save size: choose the saved size (enlarge for print, keep shape, never crop) ----------
+const SAVE_KEYS = ["orig", "a4", "a4hi", "app", "video", "custom"];
+let customW = 2480; try { customW = +(localStorage.getItem("ls-size-custom") || 2480) || 2480; } catch (e) {}
+if (!SIZES[exportSize]) exportSize = "orig";
+const clampCustom = v => Math.max(500, Math.min(4960, Math.round(+v || 0)));
+const sizeDpi = k => k === "a4" ? 300 : k === "a4hi" ? 600 : 0;
+const isIOS = () => /iP(hone|ad|od)/.test(navigator.userAgent) || (/Mac/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+const canStream = () => typeof CompressionStream !== "undefined";
+// biggest picture this device can make safely (pixels). Without streaming we need one canvas: Safari stops at ~16.7 M.
+function maxPx() { if (window.__lgMaxPx) return window.__lgMaxPx; return canStream() ? (isIOS() ? 36e6 : 60e6) : 16.7e6; }
+function targetW(k) { return k === "custom" ? clampCustom(customW) : SIZES[k] ? SIZES[k][1] : 0; }
+// what will be saved for a w×h picture. long=true: the width choice applies to the long side (stickers).
+function planSize(w, h, k = exportSize, long = false) {
+  const order = ["a4hi", "a4", "orig"];
+  const one = key => {
+    const base = long ? Math.max(w, h) : w, t = targetW(key);
+    if (!t || key === "orig") return { key, w, h, scale: 1, dpi: 0 };
+    if (t >= base && (key === "app" || key === "video")) return { key, w, h, scale: 1, dpi: 0 };   // these only make smaller, as before
+    if (t <= base && (key === "a4" || key === "a4hi")) return { key, w, h, scale: 1, dpi: sizeDpi(key) }; // already big enough: never shrink
+    const sc = t / base; return { key, w: Math.max(1, Math.round(w * sc)), h: Math.max(1, Math.round(h * sc)), scale: sc, dpi: sizeDpi(key) };
+  };
+  let pl = one(k);
+  if (pl.w * pl.h > maxPx()) {
+    const from = pl; let i = Math.max(0, order.indexOf(k) + 1);
+    if (k === "custom") i = 1;
+    for (; i < order.length; i++) { pl = one(order[i]); if (pl.w * pl.h <= maxPx()) break; }
+    if (pl.w * pl.h > maxPx()) pl = { key: "orig", w, h, scale: 1, dpi: 0 };
+    pl.fellBack = from;
+  }
+  return pl;
+}
+const fellMsg = pl => pl.fellBack ? `This device cannot make that size. Saved at ${pl.w} px wide instead.` : "";
+// file-name tag for a size choice ("" for Original, "-app"/"-video" as before, "-2480w" for the new print sizes)
+function sizeTag(pl) { if (pl.key === "orig" || (pl.scale === 1 && !pl.dpi && pl.key !== "app" && pl.key !== "video")) return ""; if (pl.key === "app" || pl.key === "video") return "-" + pl.key; return "-" + pl.w + "w"; }
+function setCustomW(v) { customW = clampCustom(v); try { localStorage.setItem("ls-size-custom", String(customW)); } catch (e) {} }
+// the "Save size" control used on every save screen. describe() returns the "Will save …" text.
+function saveSizeUI(describe, onChange) {
+  const wrap = el("div", { className: "savesize" }), note = el("p", { className: "note savenote" });
+  const seg = el("div", { className: "seg", role: "group", "aria-label": "Save size" });
+  const num = el("input", { type: "number", min: 500, max: 4960, step: 10, value: clampCustom(customW), inputMode: "numeric", "aria-label": "Custom width in pixels", className: "customw" });
+  const numRow = el("div", { className: "prow" }, el("span", { className: "label", textContent: "Width" }), num, el("span", { className: "label", textContent: "px (500–4960)" }));
+  const refresh = () => {
+    for (const b of seg.children) b.setAttribute("aria-pressed", String(b.dataset.k === exportSize));
+    numRow.style.display = exportSize === "custom" ? "" : "none"; note.textContent = describe();
+  };
+  for (const k of SAVE_KEYS) seg.append(el("button", { type: "button", textContent: SIZES[k][0], "data-k": k, on: { click: () => { setExportSize(k); refresh(); onChange && onChange(); } } }));
+  num.addEventListener("input", () => { if (+num.value >= 500) { setCustomW(num.value); refresh(); } });
+  num.addEventListener("change", () => { setCustomW(num.value); num.value = customW; refresh(); });
+  wrap.append(el("div", { className: "prow" }, el("span", { className: "label", textContent: "Save size" }), seg), numRow, note);
+  refresh(); return wrap;
+}
+const willSave = pl => `Will save ${pl.w} × ${pl.h} px` + (pl.dpi ? ` · ${pl.dpi} dpi` : "") + (pl.fellBack ? ` (too big for this device, so ${pl.w} px wide)` : "");
+// ---- enlarging: Lanczos resampling + soft threshold, made row by row so big sizes never need one huge canvas ----
+function lanczosW(srcN, dstN) {
+  const s = srcN / dstN, idx = new Int32Array(dstN * 6), wt = new Float32Array(dstN * 6);
+  const L = x => { if (x === 0) return 1; if (x <= -3 || x >= 3) return 0; const a = Math.PI * x; return 3 * Math.sin(a) * Math.sin(a / 3) / (a * a); };
+  for (let d = 0; d < dstN; d++) {
+    const c = (d + 0.5) * s - 0.5, f = Math.floor(c); let sum = 0;
+    for (let k = 0; k < 6; k++) { const i = f - 2 + k, w = L(c - i); idx[d * 6 + k] = Math.max(0, Math.min(srcN - 1, i)); wt[d * 6 + k] = w; sum += w; }
+    for (let k = 0; k < 6; k++) wt[d * 6 + k] /= sum;
+  }
+  return { idx, wt };
+}
+// returns getRow(y) → Uint8Array(W) of the enlarged, cleaned page
+function upscaler(gray, w, h, W, H, bw) {
+  const X = lanczosW(w, W), Y = lanczosW(h, H), cache = new Map(), acc = new Float32Array(W), out = new Uint8Array(W);
+  const hRow = sy => {
+    let r = cache.get(sy); if (r) return r;
+    r = new Float32Array(W); const o = sy * w;
+    for (let x = 0; x < W; x++) { let v = 0; for (let k = 0; k < 6; k++) v += gray[o + X.idx[x * 6 + k]] * X.wt[x * 6 + k]; r[x] = v; }
+    cache.set(sy, r); return r;
+  };
+  let low = 0;
+  return y => {
+    acc.fill(0); const first = Y.idx[y * 6];
+    if (first > low + 2) { for (const k of cache.keys()) if (k < first) cache.delete(k); low = first; }
+    for (let k = 0; k < 6; k++) { const r = hRow(Y.idx[y * 6 + k]), wv = Y.wt[y * 6 + k]; for (let x = 0; x < W; x++) acc[x] += r[x] * wv; }
+    for (let x = 0; x < W; x++) {
+      const v = acc[x];
+      if (bw) out[x] = v < 128 ? 0 : 255;
+      else { const t = Math.max(0, Math.min(1, (v - 50) / 175)); out[x] = Math.round(255 * (0.5 * t * t * (3 - 2 * t) + 0.5 * t)); }  // soft threshold: dark → black, paper → white, smooth edges; faint detail lines are kept
+    }
+    return out;
+  };
+}
+// PNG writer (lossless). ch: 1 = gray, 2 = gray + transparency. dpi written into the file when given.
+async function writePng(W, H, ch, getRow, dpi, label) {
+  const be = (n, a, o) => { a[o] = n >>> 24; a[o + 1] = (n >>> 16) & 255; a[o + 2] = (n >>> 8) & 255; a[o + 3] = n & 255; };
+  const chunk = (type, data) => { const c = new Uint8Array(12 + data.length); be(data.length, c, 0); for (let i = 0; i < 4; i++) c[4 + i] = type.charCodeAt(i); c.set(data, 8); be(LS.crc32(c.subarray(4, 8 + data.length)), c, 8 + data.length); return c; };
+  const ihdr = new Uint8Array(13); be(W, ihdr, 0); be(H, ihdr, 4); ihdr[8] = 8; ihdr[9] = ch === 1 ? 0 : 4;
+  const parts = [new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", ihdr)];
+  if (dpi) { const ppm = Math.round(dpi / 0.0254), d = new Uint8Array(9); be(ppm, d, 0); be(ppm, d, 4); d[8] = 1; parts.push(chunk("pHYs", d)); }
+  const rowLen = W * ch + 1;
+  if (canStream()) {
+    const cs = new CompressionStream("deflate"), wr = cs.writable.getWriter(), outP = new Response(cs.readable).arrayBuffer();
+    const per = Math.max(1, Math.floor((1 << 20) / rowLen)); let buf = new Uint8Array(per * rowLen), n = 0;
+    for (let y = 0; y < H; y++) {
+      const r = getRow(y), o = n * rowLen; buf[o] = 1;   // "Sub" filter: small files for line art
+      for (let i = 0; i < W * ch; i++) buf[o + 1 + i] = (r[i] - (i >= ch ? r[i - ch] : 0)) & 255;
+      if (++n === per) { await wr.write(buf); buf = new Uint8Array(per * rowLen); n = 0; if (label && y % (per * 4) < per) { busy(true, `${label} ${Math.round(y * 100 / H)}%`); await tick(); } }
+    }
+    if (n) await wr.write(buf.subarray(0, n * rowLen));
+    await wr.close(); parts.push(chunk("IDAT", new Uint8Array(await outP)));
+  } else {
+    // older Safari: one canvas (only reached when the size fits the canvas limit)
+    const c = document.createElement("canvas"); c.width = W; c.height = H; const ctx = c.getContext("2d"), img = ctx.createImageData(W, H), d = img.data;
+    for (let y = 0; y < H; y++) { const r = getRow(y); for (let x = 0; x < W; x++) { const j = (y * W + x) * 4, v = r[x * ch]; d[j] = d[j + 1] = d[j + 2] = v; d[j + 3] = ch === 2 ? r[x * 2 + 1] : 255; } }
+    ctx.putImageData(img, 0, 0); const b = new Uint8Array(await (await new Promise(r => c.toBlob(r, "image/png"))).arrayBuffer()); c.width = c.height = 1;
+    if (!dpi) return b;
+    return pngWithDpi(b, dpi);
+  }
+  parts.push(chunk("IEND", new Uint8Array(0)));
+  let len = 0; for (const p of parts) len += p.length; const all = new Uint8Array(len); let o = 0; for (const p of parts) { all.set(p, o); o += p.length; }
+  return all;
+}
+// put a pHYs (dpi) chunk into an existing PNG
+function pngWithDpi(b, dpi) {
+  const be = (n, a, o) => { a[o] = n >>> 24; a[o + 1] = (n >>> 16) & 255; a[o + 2] = (n >>> 8) & 255; a[o + 3] = n & 255; };
+  const ppm = Math.round(dpi / 0.0254), c = new Uint8Array(21); be(9, c, 0); c.set([112, 72, 89, 115], 4); be(ppm, c, 8); be(ppm, c, 12); c[16] = 1; be(LS.crc32(c.subarray(4, 17)), c, 17);
+  const at = 33, out = new Uint8Array(b.length + 21); out.set(b.subarray(0, at)); out.set(c, at); out.set(b.subarray(at), at + 21); return out;
+}
+// a gray (+ optional alpha) array → PNG with dpi, row by row
+function arrRows(g, a, W) { const ch = a ? 2 : 1, row = new Uint8Array(W * ch); return y => { const o = y * W; if (!a) return g.subarray(o, o + W); for (let x = 0; x < W; x++) { row[x * 2] = g[o + x]; row[x * 2 + 1] = a[o + x] ? 255 : 0; } return row; }; }
 function renderExportSettings() {
   const box = $("exportSettings"); if (!box) return; box.innerHTML = "";
   const mk = (label, opts, cur, set) => {
@@ -1578,7 +1708,8 @@ function renderExportSettings() {
     for (const [k, t] of opts) { const b = document.createElement("button"); b.type = "button"; b.textContent = t; b.setAttribute("aria-pressed", String(cur === k)); b.onclick = () => set(k); seg.append(b); }
     const row = document.createElement("div"); row.className = "prow"; const l = document.createElement("span"); l.className = "label"; l.textContent = label; row.append(l, seg); return row;
   };
-  box.append(mk("Export size", Object.entries(SIZES).map(([k, v]) => [k, v[0]]), exportSize, setExportSize),
+  const first = pages && pages[0];
+  box.append(saveSizeUI(() => first ? `Page 01: ${willSave(planSize(first.w, first.h))}. Every page keeps its own shape.` : "Add pages first."),
     mk("Edges", [["smooth", "Smooth"], ["bw", "Pure black & white"]], exportMode, setExportMode));
 }
 // area-average shrink (sharp and clean); never enlarges
@@ -1599,15 +1730,23 @@ function shrink(gray, w, h, nw) {
   }
   return { g: out, w: nw, h: nh };
 }
-async function pngBytes(p, gray) {
-  const sz = shrink(gray, p.w, p.h, SIZES[exportSize][1]);
+async function pngBytes(p, gray, pl) {
+  pl = pl || planSize(p.w, p.h);
+  if (pl.scale > 1) {   // enlarge for print
+    const bytes = await writePng(pl.w, pl.h, 1, upscaler(gray, p.w, p.h, pl.w, pl.h, exportMode === "bw"), pl.dpi, "Enlarging…");
+    return { bytes, w: pl.w, h: pl.h, pl };
+  }
+  if (pl.dpi && pl.scale === 1) {  // already big enough for this print size: same pixels as Original, with the print dpi set
+    const o = await pngBytes(p, gray, { key: "orig", w: p.w, h: p.h, scale: 1, dpi: 0 }); return { ...o, bytes: pngWithDpi(o.bytes, pl.dpi), pl };
+  }
+  const sz = shrink(gray, p.w, p.h, pl.scale < 1 ? pl.w : 0);
   const c = document.createElement("canvas"); c.width = sz.w; c.height = sz.h;
   const ctx = c.getContext("2d"), img = ctx.createImageData(sz.w, sz.h), d = img.data;
   const bw = exportMode === "bw";
   for (let i = 0, j = 0; i < sz.g.length; i++, j += 4) { const v = bw ? (sz.g[i] < THR ? 0 : 255) : sz.g[i]; d[j] = d[j + 1] = d[j + 2] = v; d[j + 3] = 255; }
   ctx.putImageData(img, 0, 0);
   const blob = await new Promise(r => c.toBlob(r, "image/png")); c.width = c.height = 1;
-  return { bytes: new Uint8Array(await blob.arrayBuffer()), w: sz.w, h: sz.h };
+  return { bytes: new Uint8Array(await blob.arrayBuffer()), w: sz.w, h: sz.h, pl };
 }
 // ===================== License (Gumroad) =====================
 const LICENSE = {
@@ -1709,15 +1848,18 @@ async function deliver(filename, blob) {
 $("readyX").addEventListener("click", () => $("ready").classList.remove("on"));
 $("exportAllBtn").addEventListener("click", async () => {
   if (E.p) await flushSave();
-  const files = [];
+  const files = []; let fell = null;
   for (let k = 0; k < pages.length; k++) {
     busy(true, `Preparing ${k + 1} of ${pages.length}…`); await tick();
     const px = await loadPx(pages[k]); if (!px) continue;
-    files.push({ name: pad(k + 1) + ".png", data: (await pngBytes(pages[k], px.gray)).bytes });
+    const pl = planSize(pages[k].w, pages[k].h); if (pl.fellBack) fell = pl;
+    files.push({ name: pad(k + 1) + sizeTag(pl) + ".png", data: (await pngBytes(pages[k], px.gray, pl)).bytes });
   }
+  if (fell) toast(fellMsg(fell), 5000);
   busy(true, "Making the ZIP…"); await tick();
   const zip = LS.zip(files); busy(false);
-  await deliver(`${safeName(curProj && curProj.name)}-${exportSize}.zip`, zip);
+  const ztag = exportSize === "custom" ? "custom-" + clampCustom(customW) + "w" : exportSize === "a4" ? "a4-300dpi" : exportSize === "a4hi" ? "a4-600dpi" : exportSize;
+  await deliver(`${safeName(curProj && curProj.name)}-${ztag}.zip`, zip);
 });
 
 // ---------- layers: original lines (base) + new lines (edit); what you see = darker of the two ----------
@@ -2464,11 +2606,28 @@ document.addEventListener("keydown", e => {
   if (!E.p) return;
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") { e.preventDefault(); (e.shiftKey ? $("redoBtn") : $("undoBtn")).click(); }
 });
-$("exportBtn").addEventListener("click", async () => {
-  const p = E.p; busy(true, "Preparing…"); await tick();
-  const out = await pngBytes(p, E.gray); busy(false);
-  toast(`${SIZES[exportSize][0]}: ${out.w}×${out.h}`, 2500);
-  await deliver(pad(E.idx + 1) + (exportSize === "orig" ? "" : "-" + exportSize) + ".png", new Blob([out.bytes], { type: "image/png" }));
+async function savePageNow() {
+  const p = E.p, pl = planSize(p.w, p.h); busy(true, "Preparing…"); await tick();
+  let out;
+  try { out = await pngBytes(p, E.gray, pl); }
+  catch (e) { busy(false); toast("This device ran out of memory. Try a smaller Save size.", 5000); return; }
+  busy(false);
+  toast(pl.fellBack ? fellMsg(pl) : `${SIZES[pl.key][0]}: ${out.w}×${out.h}`, pl.fellBack ? 5000 : 2500);
+  await deliver(pad(E.idx + 1) + sizeTag(pl) + ".png", new Blob([out.bytes], { type: "image/png" }));
+}
+$("exportBtn").addEventListener("click", () => {
+  if (!E.p) return;
+  const old = document.getElementById("saveSheet"); if (old) old.remove();
+  const p = E.p, sheet = el("div", { id: "saveSheet", role: "dialog", "aria-label": "Save this page" });
+  const close = () => sheet.remove();
+  sheet.append(el("div", { className: "box" },
+    el("h3", { textContent: "Save this page" }),
+    saveSizeUI(() => willSave(planSize(p.w, p.h))),
+    el("div", { className: "prow" },
+      el("button", { className: "btn primary", textContent: "Save", on: { click: () => { close(); savePageNow(); } } }),
+      el("button", { className: "btn", textContent: "Cancel", on: { click: close } }))));
+  sheet.addEventListener("click", e => { if (e.target === sheet) close(); });
+  document.body.append(sheet);
 });
 window.addEventListener("pagehide", flushSave);
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushSave(); });
@@ -3047,6 +3206,7 @@ function setItemMm(it, mm) {
   Object.assign(it, { w, h, mm, x: cx - w / 2, y: cy - h / 2 });
 }
 function renderLayoutUI() {
+  renderStkSave();
   if (!STK.layout) return; ensureUids();
   const L = STK.layout;
   document.querySelectorAll("#shPaper button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.p === L.paper)));
@@ -3193,13 +3353,13 @@ function shZoom(f, cx = SH.cw / 2, cy = SH.ch / 2) { const s = Math.min(SH.fit *
 })();
 
 // ===================== export =====================
-function renderSheetGray(sheet, paperKey) {
-  const P = SK.PAPER[paperKey], [PW, PH] = P.px, out = new Uint8Array(PW * PH).fill(255), k = PW / P.w;
+function renderSheetGray(sheet, paperKey, f = 1) {
+  const P = SK.PAPER[paperKey], PW = Math.round(P.px[0] * f), PH = Math.round(P.px[1] * f), out = new Uint8Array(PW * PH).fill(255), k = PW / P.w;
   for (const it of sheet) {
     const st = stOf(it.id); if (!st) continue;
     const p = STK.px.get(st.id), rotated = it.rot % 180 !== 0;
     const bw = Math.max(1, Math.round((rotated ? it.h : it.w) * k)), bh = Math.max(1, Math.round((rotated ? it.w : it.h) * k));
-    const r = SK.render({ ...p, ring: st.ring, newOutline: st.newOutline }, bw, bh, { shape: curShape(), marginPx: 3 * PPM, outlinePx: cutLinePx() });
+    const r = SK.render({ ...p, ring: st.ring, newOutline: st.newOutline }, bw, bh, { shape: curShape(), marginPx: 3 * PPM * f, outlinePx: cutLinePx() * f });
     const X = Math.round(it.x * k), Y = Math.round(it.y * k), rot = ((it.rot % 360) + 360) % 360;
     for (let by = 0; by < bh; by++) for (let bx = 0; bx < bw; bx++) {
       const i = by * bw + bx; if (!r.alpha[i]) continue;
@@ -3219,6 +3379,28 @@ async function grayToPng(g, w, h, alpha) {
   return new Uint8Array(await b.arrayBuffer());
 }
 const placedSheets = () => STK.layout.sheets.filter(sh => sh.length);
+function sheetPlan() {
+  const P = SK.PAPER[STK.layout.paper], [PW, PH] = P.px, k = exportSize;
+  let f = k === "a4hi" ? 2 : k === "custom" ? clampCustom(customW) / PW : (k === "app" || k === "video") ? Math.min(1, SIZES[k][1] / PW) : 1;
+  const mk = (f, key) => ({ key, f, w: Math.round(PW * f), h: Math.round(PH * f), dpi: key === "a4hi" ? 600 : key === "a4" ? 300 : 0, scale: f });
+  let pl = mk(f, k);
+  if (pl.w * pl.h > maxPx()) { const from = pl; pl = mk(1, "a4"); pl.fellBack = from; }
+  return pl;
+}
+function stickerPlan(p) {   // single stickers: the chosen width is the long side
+  const L = Math.round(SK.SIZES.l * PPM), k = exportSize;
+  if (k === "orig") return { key: k, L, dpi: 0 };
+  let T = k === "custom" ? clampCustom(customW) : SIZES[k][1], dpi = sizeDpi(k);
+  if ((k === "a4" || k === "a4hi") && T < L) T = L;   // never smaller than today
+  const ar = p ? p.w / p.h : 1, area = ar >= 1 ? T * T / ar : T * T * ar;
+  if (area > maxPx()) return { key: "a4", L: 2480, dpi: 300, fellBack: true };
+  return { key: k, L: T, dpi };
+}
+function stkSaveNote() {
+  const pl = sheetPlan(), kept = keptList(), sp = stickerPlan(kept[0] && STK.px.get(kept[0].id));
+  return `Sheets: ${willSave(pl)}. Single stickers: ${sp.L} px on the long side${sp.dpi ? ` · ${sp.dpi} dpi` : ""}.`;
+}
+function renderStkSave() { const b = $("stkSaveSize"); if (!b) return; b.innerHTML = ""; b.append(saveSizeUI(stkSaveNote)); }
 function stickersTxt() {
   const L = STK.layout, P = SK.PAPER[L.paper], lines = [`LineGap stickers · ${curProj ? curProj.name : ""}`, `Paper: ${P.name} (${P.w} x ${P.h} mm), 300 dpi, safe area 8 mm`, ""];
   placedSheets().forEach((sh, i) => lines.push(`s${pad(i + 1)}: ${sh.length} stickers`));
@@ -3230,20 +3412,26 @@ function needSheets() { if (!placedSheets().length) { toast("Build a sheet first
 $("shPng").onclick = async () => {
   if (!needSheets()) return;
   const files = [], sheets = placedSheets();
-  for (let i = 0; i < sheets.length; i++) { busy(true, `Making sheet ${i + 1} of ${sheets.length}…`); await tick(); const r = renderSheetGray(sheets[i], STK.layout.paper); files.push({ name: `s${pad(i + 1)}.png`, data: await grayToPng(r.gray, r.w, r.h) }); }
+  const pl = sheetPlan(); if (pl.fellBack) toast(fellMsg(pl), 5000);
+  for (let i = 0; i < sheets.length; i++) { busy(true, `Making sheet ${i + 1} of ${sheets.length}…`); await tick(); let r = renderSheetGray(sheets[i], STK.layout.paper, pl.f);
+    if (pl.f !== 1 || pl.dpi) { files.push({ name: `s${pad(i + 1)}${pl.f !== 1 ? "-" + pl.w + "w" : ""}.png`, data: await writePng(r.w, r.h, 1, arrRows(r.gray, null, r.w), pl.dpi || (pl.f !== 1 ? 0 : 0)) }); r = null; continue; }
+    files.push({ name: `s${pad(i + 1)}.png`, data: await grayToPng(r.gray, r.w, r.h) }); }
   files.push({ name: "stickers.txt", data: new TextEncoder().encode(stickersTxt()) });
   busy(false); await deliver(`${safeName(curProj && curProj.name)}-sticker-sheets.zip`, LS.zip(files));
 };
 $("shStk").onclick = async () => {
   const kept = keptList(); if (!kept.length) { toast("Keep some stickers first."); return; }
-  const files = [], L = Math.round(SK.SIZES.l * PPM);
+  const files = [], L = Math.round(SK.SIZES.l * PPM); let fell = false;
   for (let i = 0; i < kept.length; i++) {
     busy(true, `Sticker ${i + 1} of ${kept.length}…`); await tick();
-    const st = kept[i], p = STK.px.get(st.id), k = L / Math.max(p.w, p.h), sq = curShape() === "circle", W = sq ? L : Math.round(p.w * k), H = sq ? L : Math.round(p.h * k);
-    const r = SK.render({ ...p, ring: st.ring, newOutline: st.newOutline }, W, H, { shape: curShape(), marginPx: 3 * PPM, outlinePx: cutLinePx() });
-    files.push({ name: `sticker-${pad(i + 1)}.png`, data: await grayToPng(r.gray, W, H, r.alpha) });
+    const st = kept[i], p = STK.px.get(st.id), sp = stickerPlan(p), LL = sp.L, f = LL / L, k = LL / Math.max(p.w, p.h), sq = curShape() === "circle", W = sq ? LL : Math.round(p.w * k), H = sq ? LL : Math.round(p.h * k);
+    if (sp.fellBack) fell = true;
+    const r = SK.render({ ...p, ring: st.ring, newOutline: st.newOutline }, W, H, { shape: curShape(), marginPx: 3 * PPM * f, outlinePx: cutLinePx() * f });
+    if (sp.key === "orig") files.push({ name: `sticker-${pad(i + 1)}.png`, data: await grayToPng(r.gray, W, H, r.alpha) });
+    else files.push({ name: `sticker-${pad(i + 1)}-${Math.max(W, H)}w.png`, data: await writePng(W, H, 2, arrRows(r.gray, r.alpha, W), sp.dpi) });
   }
   files.push({ name: "stickers.txt", data: new TextEncoder().encode(stickersTxt()) });
+  if (fell) toast("This device cannot make that size. Saved at 2480 px instead.", 5000);
   busy(false); await deliver(`${safeName(curProj && curProj.name)}-stickers.zip`, LS.zip(files));
 };
 $("shTxt").onclick = () => deliver("stickers.txt", new Blob([stickersTxt()], { type: "text/plain" }));
@@ -3281,10 +3469,11 @@ async function buildPdf(pages, ptW, ptH) {
 }
 $("shPdf").onclick = async () => {
   if (!needSheets()) return;
-  const P = SK.PAPER[STK.layout.paper], sheets = placedSheets(), pages = [];
+  const P = SK.PAPER[STK.layout.paper], sheets = placedSheets(), pages = [], pl = sheetPlan();
+  if (pl.fellBack) toast(fellMsg(pl), 5000);
   for (let i = 0; i < sheets.length; i++) {
     busy(true, `Making page ${i + 1} of ${sheets.length}…`); await tick();
-    const r = renderSheetGray(sheets[i], STK.layout.paper);
+    const r = renderSheetGray(sheets[i], STK.layout.paper, pl.f);
     let data = await deflate(r.gray), kind = "flate";
     if (!data) { data = await jpegOf(r.gray, r.w, r.h); kind = "jpeg"; }
     pages.push({ w: r.w, h: r.h, data, kind });
