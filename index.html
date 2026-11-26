@@ -72,6 +72,7 @@ button:focus-visible,input:focus-visible,label:focus-within{outline:3px solid va
 #exportSettings{margin:-4px 0 14px}
 .savesize .seg{flex-wrap:wrap}.savesize .customw{width:110px;padding:8px 10px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:inherit}
 .savenote{margin:4px 0 10px}
+.closesize{margin:6px 0 4px}.closesize .prow{align-items:center}
 #saveSheet{position:fixed;inset:0;z-index:80;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center}
 #saveSheet .box{background:var(--surface);color:var(--ink);width:min(560px,100%);border-radius:18px 18px 0 0;padding:18px 18px calc(18px + env(safe-area-inset-bottom,0px));max-height:85vh;overflow:auto}
 #saveSheet h3{margin:0 0 10px}
@@ -1962,7 +1963,7 @@ function renderOverlay(t = performance.now()) {
     if (E.showLoose) { octx.fillStyle = gray; for (const l of E.res.loose) { const [x, y] = toScreen(l.x + .5, l.y + .5); octx.beginPath(); octx.arc(x, y, 3.5, 0, 7); octx.fill(); } }
     if (E.showTiny) { octx.strokeStyle = yel; octx.lineWidth = 2; for (const q of E.res.tiny) { const [x, y] = toScreen(q.x + .5, q.y + .5); octx.beginPath(); octx.arc(x, y, 6, 0, 7); octx.stroke(); } }
     const sg = E.selKind === "gap" && E.tool === "check" ? E.res.gaps[E.sel] : null;
-    if (sg) { const [a, b] = toScreen(sg.x1 + .5, sg.y1 + .5), [c, d] = toScreen(sg.x2 + .5, sg.y2 + .5); octx.setLineDash([4, 3]); octx.lineWidth = 2.5; octx.strokeStyle = green; octx.beginPath(); octx.moveTo(a, b); octx.lineTo(c, d); octx.stroke(); octx.setLineDash([]); }
+    if (sg) { const [a, b] = toScreen(sg.x1 + .5, sg.y1 + .5), [c, d] = toScreen(sg.x2 + .5, sg.y2 + .5); octx.save(); octx.globalAlpha = .55; octx.lineCap = "round"; octx.lineWidth = Math.max(1.5, closeStroke() * E.view.s); octx.strokeStyle = green; octx.beginPath(); octx.moveTo(a, b); octx.lineTo(c, d); octx.stroke(); octx.restore(); octx.setLineDash([4, 3]); octx.lineWidth = 2.5; octx.strokeStyle = green; octx.beginPath(); octx.moveTo(a, b); octx.lineTo(c, d); octx.stroke(); octx.setLineDash([]); }
     const si = E.selKind === "loose" ? E.res.loose[E.sel] : E.selKind === "tiny" ? E.res.tiny[E.sel] : null;
     if (si) {
       const [x, y] = toScreen(si.x + .5, si.y + .5);
@@ -1988,7 +1989,7 @@ function renderOverlay(t = performance.now()) {
     leaks.forEach(i => {
       const g = E.res.gaps[i], [x, y] = toScreen((g.x1 + g.x2) / 2 + .5, (g.y1 + g.y2) / 2 + .5), sel = i === E.fillSel;
       octx.strokeStyle = red; octx.lineWidth = sel ? 4 : 3; octx.beginPath(); octx.arc(x, y, (sel ? 18 : 14) + Math.sin(t / 260) * 3, 0, 7); octx.stroke();
-      if (sel) { const [a, b] = toScreen(g.x1 + .5, g.y1 + .5), [c, d] = toScreen(g.x2 + .5, g.y2 + .5); octx.setLineDash([4, 3]); octx.lineWidth = 2.5; octx.strokeStyle = green; octx.beginPath(); octx.moveTo(a, b); octx.lineTo(c, d); octx.stroke(); octx.setLineDash([]); }
+      if (sel) { const [a, b] = toScreen(g.x1 + .5, g.y1 + .5), [c, d] = toScreen(g.x2 + .5, g.y2 + .5); octx.save(); octx.globalAlpha = .55; octx.lineCap = "round"; octx.lineWidth = Math.max(1.5, closeStroke() * E.view.s); octx.strokeStyle = green; octx.beginPath(); octx.moveTo(a, b); octx.lineTo(c, d); octx.stroke(); octx.restore(); octx.setLineDash([4, 3]); octx.lineWidth = 2.5; octx.strokeStyle = green; octx.beginPath(); octx.moveTo(a, b); octx.lineTo(c, d); octx.stroke(); octx.setLineDash([]); }
     });
     if (E.pick) {
       octx.fillStyle = green; octx.strokeStyle = green;
@@ -2160,17 +2161,18 @@ function renderPanel() {
     if (E.selKind === "gap" && E.sel >= 0 && gaps[E.sel]) {
       const g = gaps[E.sel];
       add(el("h3", { textContent: `Gap ${E.sel + 1} of ${gaps.length}` }),
-        el("p", { textContent: `${g.size} px wide. The green dashes show the line the app would add. Close it with that line, or draw your own fix.` }),
+        el("p", { textContent: `${g.size} px wide. The green line shows what the app would add. Close it with that line, or draw your own fix.` }),
+        closeSizeRow(() => renderOverlay()),
         el("div", { className: "prow" },
           el("button", { className: "btn primary", textContent: "Close this gap", on: { click: () => {
-            pushUndo(snap()); LS.drawGaps(E.edit, E.w, E.h, [g], E.res.stroke); compose(E.base, E.edit, E.gray);
+            pushUndo(snap()); LS.drawGaps(E.edit, E.w, E.h, [g], closeStroke()); compose(E.base, E.edit, E.gray);
             gaps.splice(E.sel, 1); E.p.gapCount = gaps.length; E.p.status = gaps.length ? "gaps" : "closed";
             E.justClosed = [(g.x1 + g.x2) / 2, (g.y1 + g.y2) / 2]; E.sel = -1;
             afterEdit({}); renderPanel(); renderOverlay(); toast("Closed");
           } } }),
           el("button", { className: "btn", textContent: "Draw my own", on: { click: () => {
             E.fromGap = [(g.x1 + g.x2) / 2, (g.y1 + g.y2) / 2]; E.pen = "pen";
-            E.size = Math.max(1, Math.round(E.res.stroke)); setTool("draw");
+            E.size = Math.max(1, Math.round(closeStroke())); setTool("draw");
           } } }),
           el("button", { className: "btn", textContent: "Ignore", on: { click: () => { E.p.ignored.push(g.key); gaps.splice(E.sel, 1); E.p.gapCount = gaps.length; E.p.status = gaps.length ? "gaps" : "closed"; markDirty(E.p); if (gaps.length) selectGap(Math.min(E.sel, gaps.length - 1)); else { E.sel = -1; renderPanel(); render(); toast("No gaps left."); } } } })),
         el("div", { className: "prow" },
@@ -2184,7 +2186,7 @@ function renderPanel() {
       add(el("h3", { textContent: `Loose end ${E.sel + 1} of ${L.length}` }),
         el("p", { textContent: E.connect ? "A line end that doesn’t let color leak. Usually fine (hair, decoration). Connect it if it should touch the nearby line (green dashes)." : "A line end that doesn’t let color leak. Usually fine. No line is close enough to connect to; use Draw if you need one." }),
         el("div", { className: "prow" },
-          el("button", { className: "btn primary", textContent: "Connect", disabled: !E.connect, on: { click: () => { const t = E.connect; pushUndo(snap()); LS.capsule(E.edit, E.w, E.h, l.x + .5, l.y + .5, t.x + .5, t.y + .5, Math.max(0.9, E.res.stroke / 2), "ink"); compose(E.base, E.edit, E.gray);
+          el("button", { className: "btn primary", textContent: "Connect", disabled: !E.connect, on: { click: () => { const t = E.connect; pushUndo(snap()); LS.capsule(E.edit, E.w, E.h, l.x + .5, l.y + .5, t.x + .5, t.y + .5, Math.max(0.9, closeStroke() / 2), "ink"); compose(E.base, E.edit, E.gray);
             const at = E.sel; L.splice(at, 1); afterEdit({});
             if (L.length) selectItem("loose", Math.min(at, L.length - 1)); else { E.sel = -1; renderPanel(); renderOverlay(); }
             toast("Connected"); } } }),
@@ -2239,6 +2241,7 @@ function renderPanel() {
         el("input", { type: "range", min: 1, max: E.closeMax, step: 1, value: E.closeN, "aria-label": "Close gaps up to", on: { input: e => { E.closeN = +e.target.value; buildClosePreview(); paintLayer(); renderPanel(); } } }),
         el("small", { textContent: String(E.closeMax) }), val),
       el("p", { textContent: gaps.length ? `Closes ${n} of ${gaps.length} gaps (green). Use Before/After to compare.` : "No gaps to close." }),
+      closeSizeRow(done => { buildClosePreview(); paintLayer(); }),
       big ? el("p", { className: "note", textContent: `Big gaps need a hand-drawn fix: ${big} left (red). Use Draw.` }) : null,
       el("button", { className: "btn primary big", textContent: n ? `Apply: close ${n}` : "Nothing to close", disabled: !n, on: { click: applyClose } }));
     return;
@@ -2301,7 +2304,7 @@ function renderPanel() {
 const FILL_COLORS = ["#F7A8B8", "#8FCBF2", "#FFD45E", "#9EDC97", "#C3AEF2", "#FFAE73"];
 const FILL_RGB = FILL_COLORS.map(h => [1, 3, 5].map(k => parseInt(h.slice(k, k + 2), 16)));
 let fillColor = 0;
-const fillStroke = () => Math.max(1, E.res ? E.res.stroke : 2);
+const fillStroke = () => closeStroke();
 function fillRefresh() {
   const n = E.w * E.h, lab = new Uint8Array(n), g = E.gray, w = E.w, h = E.h, stack = new Int32Array(n);
   E.fills.forEach((f, k) => {
@@ -2353,7 +2356,7 @@ function fillTap(sx, sy) {
 }
 function fillCloseGaps(list) {
   if (!list.length) return;
-  pushUndo(snap()); LS.drawGaps(E.edit, E.w, E.h, list.map(i => E.res.gaps[i]), E.res.stroke); compose(E.base, E.edit, E.gray);
+  pushUndo(snap()); LS.drawGaps(E.edit, E.w, E.h, list.map(i => E.res.gaps[i]), closeStroke()); compose(E.base, E.edit, E.gray);
   E.fillSel = -1; afterEdit({ now: true }); toast(list.length === 1 ? "Gap closed. Color test updated." : `Closed ${list.length} gaps. Color test updated.`);
 }
 function fillPanel(add) {
@@ -2374,7 +2377,8 @@ function fillPanel(add) {
   if (E.fillSel >= 0 && E.res && E.res.gaps[E.fillSel]) {
     const g = E.res.gaps[E.fillSel];
     add(el("h3", { textContent: `Leak: gap ${E.fillSel + 1}` }),
-      el("p", { textContent: `${g.size} px wide. Choose how to close it. The green dashes show the app’s line.` }),
+      el("p", { textContent: `${g.size} px wide. Choose how to close it. The green line shows the app’s line.` }),
+      closeSizeRow(() => renderOverlay()),
       el("div", { className: "prow" },
         el("button", { className: "btn primary", textContent: "Close with this line", on: { click: () => fillCloseGaps([E.fillSel]) } }),
         el("button", { className: "btn", textContent: "Connect two points", on: { click: () => { E.pick = { a: null, b: null }; renderPanel(); renderOverlay(); } } }),
@@ -2390,6 +2394,7 @@ function fillPanel(add) {
   if (cur && cur.area > 0) {
     const big = cur.area > E.w * E.h * 0.35;
     if (leaks.length) add(el("p", { className: "note", textContent: `This color leaks through ${leaks.length} ${leaks.length === 1 ? "gap" : "gaps"} (red circles). Tap a circle to choose how to close it, or close all.` }),
+      closeSizeRow(),
       el("div", { className: "prow" },
         el("button", { className: "btn primary", textContent: leaks.length === 1 ? "Close this gap" : `Close all ${leaks.length}`, on: { click: () => fillCloseGaps(leaks) } }),
         el("button", { className: "btn", textContent: "Connect two points", on: { click: () => { E.pick = { a: null, b: null }; renderPanel(); renderOverlay(); } } })));
@@ -2429,12 +2434,28 @@ function setPend(b, e) {
   E.pend = { b, e };
   E.preview = new Uint8Array(E.gray.length); compose(b || E.base, e || E.edit, E.preview);
 }
+// ---------- closing line size: Auto (matches the drawing) or the size you pick ----------
+let closeW = 0; try { closeW = +(localStorage.getItem("ls-close-w") || 0) || 0; } catch (e) {}
+function closeStroke() { return closeW > 0 ? closeW : Math.max(1, E.res ? E.res.stroke : 2); }
+function setCloseW(v) { closeW = v; try { localStorage.setItem("ls-close-w", String(v)); } catch (e) {} }
+function closeSizeRow(after) {
+  const auto = Math.max(1, E.res ? E.res.stroke : 2), max = Math.max(6, Math.ceil(auto * 2)), fmt = v => (Math.round(v * 2) / 2).toFixed(1).replace(/\.0$/, "");
+  const val = el("span", { className: "v", textContent: closeW > 0 ? fmt(closeW) + " px" : "Auto" });
+  const tip = el("p", { className: "note", textContent: closeW > 0 ? `New closing lines will be ${fmt(closeW)} px. Your lines are about ${fmt(auto)} px.` : `Auto: matches your lines (about ${fmt(auto)} px).` });
+  const range = el("input", { type: "range", min: 0.5, max, step: 0.5, value: closeW > 0 ? closeW : auto, "aria-label": "Closing line size",
+    on: { input: e => { setCloseW(+e.target.value); val.textContent = fmt(closeW) + " px"; tip.textContent = `New closing lines will be ${fmt(closeW)} px. Your lines are about ${fmt(auto)} px.`; after && after(false); },
+          change: () => after && after(true) } });
+  return el("div", { className: "closesize" },
+    el("div", { className: "prow" }, el("span", { className: "label", textContent: "Closing line size" }),
+      el("button", { type: "button", className: "chip", "aria-pressed": String(!(closeW > 0)), textContent: "Auto", on: { click: () => { setCloseW(0); after && after(true); renderPanel(); } } })),
+    el("div", { className: "slider" }, el("small", { textContent: "thin" }), range, el("small", { textContent: "thick" }), val), tip);
+}
 function buildClosePreview() {
   E.pend = null; E.preview = null;
   if (!E.res) return;
   const list = E.res.gaps.filter(g => g.size <= E.closeN);
   if (!list.length) return;
-  const pe = E.edit.slice(); LS.drawGaps(pe, E.w, E.h, list, E.res.stroke); setPend(null, pe);
+  const pe = E.edit.slice(); LS.drawGaps(pe, E.w, E.h, list, closeStroke()); setPend(null, pe);
 }
 function buildCleanPreview() { setPend(LS.pureBW(E.base, THR), hasInk(E.edit) ? LS.pureBW(E.edit, THR) : null); }
 function commitPend() {
