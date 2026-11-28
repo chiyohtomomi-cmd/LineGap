@@ -76,6 +76,10 @@ button:focus-visible,input:focus-visible,label:focus-within{outline:3px solid va
 #saveSheet{position:fixed;inset:0;z-index:80;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center}
 #saveSheet .box{background:var(--surface);color:var(--ink);width:min(560px,100%);border-radius:18px 18px 0 0;padding:18px 18px calc(18px + env(safe-area-inset-bottom,0px));max-height:85vh;overflow:auto}
 #saveSheet h3{margin:0 0 10px}
+#keySheet{position:fixed;inset:0;z-index:85;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:16px}
+#keySheet .box{background:var(--surface);color:var(--ink);width:min(440px,100%);border-radius:18px;padding:20px;display:flex;flex-direction:column;gap:10px}
+#keySheet h3{margin:0}#keySheet .note{margin:0;color:inherit;opacity:.75;font-size:15px}#keySheet .prow{display:flex;gap:8px}#keySheet .likey{flex:1;min-width:0}
+#keySheet .big{padding:14px;font-size:17px;text-align:center;text-decoration:none}
 .backup{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:12px 14px;margin:0 0 14px;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;justify-content:space-between}
 .backuptext{display:flex;flex-direction:column;font-size:14px;min-width:200px;flex:1}
 .backuptext span{color:var(--muted)}
@@ -1754,6 +1758,7 @@ const LICENSE = {
   gumroadProductId: "PYTlI_IFK0IfB0_DPAylZA==",   // Gumroad product id (Content tab → License key box)
   gumroadMaxUses: 3,    // Gumroad counts activations, not devices: 2 devices + 1 spare for a reinstall
   supportEmail: "tomomicreativehub@gmail.com",
+  price: "$9",                                                   // shown on the buy button
   buyUrl: "https://linestudio5.gumroad.com/l/line-studio",           // the checkout link people tap on "Get a key"
   freeExports: 3,       // exports allowed before a key is needed
   recheckDays: 7        // check the key online again after this many days (works offline in between)
@@ -1783,22 +1788,22 @@ function renderLicense() {
     : left ? `Free to try: ${left} ${left === 1 ? "export" : "exports"} left. Everything else is free. Enter a key for unlimited exports.`
     : "Your free exports are used. Enter a license key to export. Your work is safe, and backups are always free.";
 }
-$("licActivate").addEventListener("click", async () => {
-  const key = $("licKey").value.trim(); if (!key) { toast("Paste your license key first."); return; }
+async function activateKey(key) {
+  key = (key || "").trim(); if (!key) { toast("Paste your license key first."); return false; }
   busy(true, "Checking your key…");
   if (isGumroadKey(key)) {
     try {
       const j = await gumVerify(key, true);
       busy(false);
-      if (gumBad(j)) { toast(j.purchase && (j.purchase.refunded || j.purchase.chargebacked) ? "This key is no longer active." : "That key didn’t work. Check it and try again.", 4500); return; }
-      if ((j.uses || 0) > LICENSE.gumroadMaxUses) { toast(`This key is already used on the most devices allowed. Email ${LICENSE.supportEmail} to move it.`, 6000); return; }
+      if (gumBad(j)) { toast(j.purchase && (j.purchase.refunded || j.purchase.chargebacked) ? "This key is no longer active." : "That key didn’t work. Check it and try again.", 4500); return false; }
+      if ((j.uses || 0) > LICENSE.gumroadMaxUses) { toast(`This key is already used on the most devices allowed. Email ${LICENSE.supportEmail} to move it.`, 6000); return false; }
       licSet({ ok: true, key, provider: "gumroad", checked: Date.now() });
-      $("licKey").value = ""; renderLicense(); toast("Activated ✓ Thank you!");
-    } catch (e) { busy(false); toast("Can’t reach the license server. Check your internet and try again."); }
-    return;
+      renderLicense(); toast("Activated ✓ Thank you!"); return true;
+    } catch (e) { busy(false); toast("Can’t reach the license server. Check your internet and try again."); return false; }
   }
-  busy(false); toast("That key didn’t work. Check it and try again.", 4500);
-});
+  busy(false); toast("That key didn’t work. Check it and try again.", 4500); return false;
+}
+$("licActivate").addEventListener("click", async () => { if (await activateKey($("licKey").value)) $("licKey").value = ""; });
 $("licRemove").addEventListener("click", async () => {
   const b = $("licRemove"), l = licGet(); if (!l) return;
   if (!b.dataset.armed) { b.dataset.armed = "1"; b.textContent = "Tap again to remove"; setTimeout(() => { delete b.dataset.armed; b.textContent = "Remove from this device"; }, 3000); return; }
@@ -1820,11 +1825,33 @@ $("licRemove").addEventListener("click", async () => {
 function canExport(filename) {
   if (!licOn() || licValid() || /-backup-/.test(filename)) return true;
   if (freeUsed() < LICENSE.freeExports) { lsSet("ls-free-used", String(freeUsed() + 1)); renderLicense(); const left = LICENSE.freeExports - freeUsed(); toast(left ? `Free export: ${left} left` : "That was your last free export", 2500); return true; }
-  toast("Free exports are used. Go to the home screen and enter a license key.", 4500);
   renderLicense(); return false;
 }
+// shown the moment free exports run out: buy, paste key, then save the same file
+function keySheet(filename, blob) {
+  const old = document.getElementById("keySheet"); if (old) old.remove();
+  const close = () => sheet.remove();
+  const input = el("input", { className: "likey", placeholder: "Paste your license key", autocomplete: "off", autocapitalize: "off", spellcheck: "false", "aria-label": "License key" });
+  const body = el("div", { className: "box" },
+    el("h3", { textContent: "You’ve used your 3 free exports 🎉" }),
+    el("p", { className: "note", textContent: `Get LineGap for unlimited exports in A4 300 dpi, A4 600 dpi and every size. One payment${LICENSE.price ? " of " + LICENSE.price : ""}. Your work is safe, nothing is lost.` }),
+    el("a", { className: "btn primary big", href: LICENSE.buyUrl, target: "_blank", rel: "noopener", textContent: `Get LineGap${LICENSE.price ? " – " + LICENSE.price : ""}` }),
+    el("p", { className: "note", textContent: "Already bought? Gumroad emails your key. Paste it here:" }),
+    el("div", { className: "prow" }, input,
+      el("button", { type: "button", className: "btn primary", textContent: "Activate", on: { click: async () => {
+        if (!(await activateKey(input.value))) return;
+        body.replaceChildren(
+          el("h3", { textContent: "Activated ✓ Thank you!" }),
+          el("p", { className: "note", textContent: "Unlimited exports are on for this device." }),
+          el("button", { type: "button", className: "btn primary big", textContent: "Save my file now", on: { click: () => { close(); deliver(filename, blob); } } }));
+      } } })),
+    el("button", { type: "button", className: "btn", textContent: "Not now", on: { click: close } }));
+  const sheet = el("div", { id: "keySheet", role: "dialog", "aria-label": "Get LineGap" }, body);
+  sheet.addEventListener("click", e => { if (e.target === sheet) close(); });
+  document.body.appendChild(sheet);
+}
 async function deliver(filename, blob) {
-  if (!canExport(filename)) return;
+  if (!canExport(filename)) { keySheet(filename, blob); return; }
   let dl = downloads;
   if (!dl && window.claude && claude.use) { try { dl = await claude.use("downloads"); downloads = dl; } catch (e) { dl = null; } }
   if (dl) {
